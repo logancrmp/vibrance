@@ -1,0 +1,21 @@
+[package]
+name = "vibrance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vibrance-audio.workspace = true
+vibrance-library.workspace = true
+log.workspace = true
+crossbeam-channel.workspace = true
+image.workspace = true
+iced = { version = "=0.14.0", features = ["wgpu", "tiny-skia", "canvas", "image", "advanced", "tokio"] }
+material-colors = { version = "0.5", features = ["quantize"] }
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
+directories = "6"
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+env_logger = "0.11"
+tokio = { version = "1", features = ["time"] }
+unicode-normalization = "0.1"

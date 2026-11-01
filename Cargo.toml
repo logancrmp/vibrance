@@ -1,0 +1,28 @@
+[workspace]
+resolver = "3"
+members = ["crates/vibrance", "crates/vibrance-audio", "crates/vibrance-library"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+vibrance-audio = { path = "crates/vibrance-audio" }
+vibrance-library = { path = "crates/vibrance-library" }
+log = "0.4"
+thiserror = "2"
+crossbeam-channel = "0.5"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+# Keep dev builds usable for audio and UI work.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

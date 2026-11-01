@@ -1,0 +1,16 @@
+[package]
+name = "vibrance-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+log.workspace = true
+thiserror.workspace = true
+crossbeam-channel.workspace = true
+symphonia = { version = "0.6", features = ["all"] }
+cpal = "0.18"
+rtrb = "0.4"
+rubato = "5"
+rustfft = "6"
+opus = "0.4"
