@@ -1,4 +1,4 @@
-//! The campfire scene (SPEC 4.4): a 3D fire simulation burning in a photo-scanned stone fire
+//! The campfire scene: a 3D fire simulation burning in a photo-scanned stone fire
 //! pit at night, rendered physically.
 //!
 //! - `sim.wgsl`: the fire, as a gas on a 3D grid (fuel, combustion, soot, buoyancy, vorticity).

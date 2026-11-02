@@ -1,4 +1,4 @@
-//! Background saving of UI state and settings, so the UI thread never writes (SPEC 7.2).
+//! Background saving of UI state and settings, so the UI thread never writes.
 
 use std::collections::HashMap;
 use std::path::PathBuf;

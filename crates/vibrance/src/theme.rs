@@ -1,4 +1,4 @@
-//! Material 3 color roles, type scale, and shapes (SPEC 5.3, 5.4).
+//! Material 3 color roles, type scale, and shapes.
 
 use iced::font::{Family, Weight};
 use iced::{Color, Font};
@@ -219,7 +219,7 @@ pub fn layer(base: Color, content: Color, opacity: f32) -> Color {
     )
 }
 
-/// Seed color for the Album Art palette (SPEC 5.4): Celebi quantizer + score.
+/// Seed color for the Album Art palette: Celebi quantizer + score.
 pub fn art_seed(image: &image::RgbaImage) -> Rgb {
     let small = image::imageops::thumbnail(image, 112, 112);
     let pixels: Vec<Rgb> = small

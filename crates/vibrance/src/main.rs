@@ -32,7 +32,7 @@ Set VIBRANCE_TRACE=1 to log the startup timeline, VIBRANCE_HOME=<dir> to
 keep config, data, and cache under one directory.
 ";
 
-/// Process start, for the startup timeline (SPEC 7.3).
+/// Process start, for the startup timeline.
 pub static LAUNCH: OnceLock<Instant> = OnceLock::new();
 
 fn main() -> iced::Result {
@@ -53,7 +53,7 @@ fn main() -> iced::Result {
         }
     };
     let decorations = Config::load(&Paths::resolve()).title_bar == TitleBar::System;
-    // The taskbar finds the window's icon through its desktop entry (SPEC 3.2). Test runs
+    // The taskbar finds the window's icon through its desktop entry. Test runs
     // leave the real home alone.
     if std::env::var_os("VIBRANCE_HOME").is_none() && options.screenshot.is_none() && options.script.is_empty() {
         std::thread::spawn(install_launcher);

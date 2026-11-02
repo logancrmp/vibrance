@@ -1,4 +1,4 @@
-//! Live folder watching (SPEC 4.5 "Staying up to date").
+//! Live folder watching.
 //!
 //! notify's inotify thread classifies raw events and pings a debounce thread, which emits one
 //! `WatchEvent::Changed` once things go quiet. The UI answers that with a rescan, which is cheap

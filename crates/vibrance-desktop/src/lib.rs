@@ -1,4 +1,4 @@
-//! Desktop integration: MPRIS (SPEC 3.2, 4.6) and "Show in Folder" (SPEC 4.7) over D-Bus,
+//! Desktop integration: MPRIS and "Show in Folder" over D-Bus,
 //! and the desktop entry that gives the window its icon.
 //!
 //! The MPRIS server runs on its own thread with its own executor (zbus's `block_on`), so media

@@ -12,7 +12,7 @@ use super::campfire::Campfire;
 use super::{Frame, Uniforms, Vertex};
 use crate::app::Message;
 
-/// Larger areas render at this many pixels and are upscaled (SPEC 4.4 render resolution).
+/// Larger areas render at this many pixels and are upscaled.
 const MAX_PIXELS: f32 = 3840.0 * 2160.0;
 /// Mip levels per chain: the feedback's for the 3D view's level of detail, the scene's for
 /// bloom and the limiter. Matches `MAX_LOD` in the shader.

@@ -1,4 +1,4 @@
-//! Library benchmarks (SPEC 7.1, "Background" rows).
+//! Library benchmarks.
 //!
 //! ```text
 //! cargo run --release -p vibrance-library --example bench -- import <music-dir> [db-path]
@@ -13,7 +13,7 @@
 //!
 //! cargo run --release -p vibrance-library --example bench -- synth <out-dir> [count]
 //!     Writes `count` (default 100000) short tagged MP3s spread over 2,000 artists and
-//!     8,000 albums, like the SPEC 7.1 reference library. Needs ffmpeg for the audio frames.
+//!     8,000 albums, a large reference library. Needs ffmpeg for the audio frames.
 //! ```
 
 use std::fs;

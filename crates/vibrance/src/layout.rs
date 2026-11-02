@@ -1,10 +1,10 @@
-//! Pane layout: the default arrangement, its saved form, and showing/hiding panes (SPEC 6.2).
+//! Pane layout: the default arrangement, its saved form, and showing/hiding panes.
 
 use iced::widget::pane_grid::{self, Axis, Configuration, Node};
 
 use crate::app::{Pane, Slot};
 
-/// The default layout (SPEC 5.2): Artists | Albums over Songs, Queue over Album Art.
+/// The default layout: Artists | Albums over Songs, Queue over Album Art.
 pub fn default() -> pane_grid::State<Slot> {
     pane_grid::State::with_configuration(parse(DEFAULT).expect("default layout parses"))
 }
@@ -103,7 +103,7 @@ pub fn find(state: &pane_grid::State<Slot>, slot: Slot) -> Option<pane_grid::Pan
     state.iter().find(|(_, s)| **s == slot).map(|(p, _)| *p)
 }
 
-/// Now Playing and Queue always stay (SPEC 6.2).
+/// Now Playing and Queue always stay.
 pub fn can_hide(slot: Slot) -> bool {
     slot != Slot::List(Pane::Queue)
 }

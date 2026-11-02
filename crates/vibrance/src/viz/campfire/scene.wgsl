@@ -1,4 +1,4 @@
-// Campfire: rendering the scene (SPEC 4.4). A night sky (an HDR photo), photo-scanned stones,
+// Campfire: rendering the scene. A night sky (an HDR photo), photo-scanned stones,
 // logs and ground in physically based shading, lit by the fire itself (the simulation's glow
 // summed into point lights, with soft shadows from a cube map), and the flames as a volume:
 // ray-marched glowing soot (Kirchhoff: it emits as much as it absorbs, by Planck's law at its

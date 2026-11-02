@@ -1,4 +1,4 @@
-//! In-memory library model: artists, albums, sort orders, filtering (SPEC 4.1).
+//! In-memory library model: artists, albums, sort orders, filtering.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -286,7 +286,7 @@ fn album_default_cmp(a: &Album, b: &Album) -> Ordering {
         .then_with(|| natural_cmp(&a.name_key, &b.name_key))
 }
 
-/// Type-to-jump (SPEC 4.1): first row starting with the term, else first containing it.
+/// Type-to-jump: first row starting with the term, else first containing it.
 pub fn best_match<'a>(rows: impl Iterator<Item = &'a str> + Clone, term: &str) -> Option<usize> {
     let term = fold(term);
     rows.clone()

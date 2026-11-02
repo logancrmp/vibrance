@@ -1,4 +1,4 @@
-// Feedback visualizer (SPEC 4.4).
+// Feedback visualizer.
 //
 // Each 60 Hz step warps the previous frame and draws shapes and scenes into it. The warp
 // follows MilkDrop 2's per-vertex equations (zoom/zoomexp, rotation, the four-term animated

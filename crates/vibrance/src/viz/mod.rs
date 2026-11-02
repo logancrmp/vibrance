@@ -1,4 +1,4 @@
-//! MilkDrop-style feedback visualizer (SPEC 4.4).
+//! MilkDrop-style feedback visualizer.
 //!
 //! The engine runs on the UI thread once per displayed frame: it follows the music (bands,
 //! beats, tempo), drifts and blends presets, and produces uniforms plus shape vertices. The
@@ -10,7 +10,7 @@
 //!
 //! The warp equations follow MilkDrop 2 (BSD, © Nullsoft) as ported by Butterchurn (MIT,
 //! © Jordan Berg); see `viz.wgsl`. Each displayed frame then views the feedback in 3D and
-//! lights it (SPEC 4.4).
+//! lights it.
 
 pub mod campfire;
 mod fire;

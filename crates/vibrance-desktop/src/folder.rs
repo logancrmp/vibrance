@@ -1,4 +1,4 @@
-//! "Show in Folder" (SPEC 4.7): `org.freedesktop.FileManager1.ShowItems`, which opens the
+//! "Show in Folder": `org.freedesktop.FileManager1.ShowItems`, which opens the
 //! folder with the file selected, falling back to `xdg-open <folder>`.
 
 use std::path::{Path, PathBuf};

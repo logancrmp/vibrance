@@ -116,7 +116,7 @@ pub fn bridge<T: Send + 'static>(rx: crossbeam_channel::Receiver<T>) -> async_ch
 }
 
 impl App {
-    /// Work deferred until the window is up (SPEC 7.2): launch rescan, watching, loudness.
+    /// Work deferred until the window is up: launch rescan, watching, loudness.
     pub(super) fn after_first_frame(&mut self) {
         self.start_scan(None);
         self.start_watcher();
@@ -240,7 +240,7 @@ impl App {
         }
     }
 
-    /// Measure tracks without ReplayGain in the background while normalization is on (SPEC 3.2).
+    /// Measure tracks without ReplayGain in the background while normalization is on.
     pub(super) fn start_gain_worker(&mut self) {
         if self.gain_worker.is_some() || !self.config.normalization {
             return;

@@ -1,4 +1,4 @@
-//! Palette preview disc: primary on top, secondary container and tertiary below (SPEC 6.3).
+//! Palette preview disc: primary on top, secondary container and tertiary below.
 
 use iced::mouse::Cursor;
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};

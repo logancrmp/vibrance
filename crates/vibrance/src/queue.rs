@@ -1,4 +1,4 @@
-//! Queue rules (SPEC 4.2). Pure logic; the app turns `Step`s into engine calls.
+//! Queue rules. Pure logic; the app turns `Step`s into engine calls.
 
 use vibrance_library::TrackId;
 
@@ -155,7 +155,7 @@ impl Queue {
         }
     }
 
-    /// Empty the queue without stopping the audible track (SPEC 4.2).
+    /// Empty the queue without stopping the audible track.
     pub fn clear(&mut self) {
         self.items.clear();
         self.current = None;

@@ -1,4 +1,4 @@
-// Campfire: a 3D fire simulation (SPEC 4.4).
+// Campfire: a 3D fire simulation.
 //
 // Stam's "Stable Fluids" on the GPU (GPU Gems ch. 38), in 3D with MacCormack advection as in
 // GPU Gems 3 ch. 30, plus fuel, combustion, soot, buoyancy and vorticity confinement after

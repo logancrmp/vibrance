@@ -1,4 +1,4 @@
-//! Audio features for the visualizers (SPEC 4.4): spectrum bars, band levels, beats and tempo.
+//! Audio features for the visualizers: spectrum bars, band levels, beats and tempo.
 //!
 //! The spectrum is taken once per rendered frame from the latest 2048 samples. Beat detection
 //! runs at a fixed hop over the tap's sample timeline instead, so it does not depend on the

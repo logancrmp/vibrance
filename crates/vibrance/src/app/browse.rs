@@ -1,4 +1,4 @@
-//! Library panes: rows, selection, sorting, type-to-jump, and navigation (SPEC 4.1).
+//! Library panes: rows, selection, sorting, type-to-jump, and navigation.
 
 use super::*;
 use crate::model;
@@ -119,7 +119,7 @@ impl App {
         }
     }
 
-    /// Double-click (SPEC 4.2). A song queues the whole Songs pane and plays from its position.
+    /// Double-click. A song queues the whole Songs pane and plays from its position.
     pub(super) fn activate(&mut self, pane: Pane, row: usize) {
         let ids = match pane {
             Pane::Artists if row > 0 => self.artist_rows.get(row - 1).map(|&a| self.model.artist_track_ids(a)),
@@ -174,7 +174,7 @@ impl App {
         }
     }
 
-    /// Tracks of the selection, in display order (SPEC 4.2 "Song order when queuing").
+    /// Tracks of the selection, in display order.
     pub(super) fn selection_ids(&self, pane: Pane) -> Vec<TrackId> {
         match pane {
             Pane::Artists => self.artist_rows.iter().filter(|&&a| self.sel_artists.contains(&self.model.artists[a].key)).flat_map(|&a| self.model.artist_track_ids(a)).collect(),
@@ -275,7 +275,7 @@ impl App {
         self.scroll_into_view(pane, row, false)
     }
 
-    /// Select an artist, cascading the filter, and scroll to it (SPEC 4.7).
+    /// Select an artist, cascading the filter, and scroll to it.
     pub(super) fn go_to_artist(&mut self, key: String) -> Task<Message> {
         self.sel_artists = vec![key.clone()];
         self.sel_albums.clear();

@@ -17,8 +17,6 @@ Vibrance adds itself to your app launcher (`~/.local/share/applications`) when i
 
 The campfire visualizer uses photo-scanned assets (CC0, from [Poly Haven](https://polyhaven.com), about 290 MB). Fetch them once with `scripts/fetch-campfire-assets.py`.
 
-The design lives in [SPEC.md](SPEC.md).
-
 ## License
 
 MIT. Bundled fonts: Roboto Flex (OFL 1.1) and Material Symbols (Apache 2.0).

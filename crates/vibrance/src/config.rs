@@ -1,4 +1,4 @@
-//! Settings file and XDG paths (SPEC 3.4, 6.3).
+//! Settings file and XDG paths.
 
 use std::path::PathBuf;
 

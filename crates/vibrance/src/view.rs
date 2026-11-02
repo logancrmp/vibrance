@@ -1,4 +1,4 @@
-//! The window: title bar, now-playing strip, pane grid, menus, and dialogs (SPEC 5).
+//! The window: title bar, now-playing strip, pane grid, menus, and dialogs.
 
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{
@@ -150,7 +150,7 @@ impl App {
 
         let seek = self.seek_column(track.is_some());
 
-        // Clicking the compact spectrum opens the full-screen visualizer (SPEC 4.4).
+        // Clicking the compact spectrum opens the full-screen visualizer.
         let spectrum = mouse_area(container(canvas(Spectrum { bars: &self.bars, peaks: &self.peaks, colors: c, gap: 2.0 }).width(168).height(48)).padding(4))
             .on_press(Message::VizFullscreen(true))
             .interaction(mouse::Interaction::Pointer);
@@ -230,7 +230,7 @@ impl App {
     fn pane_title(&self, slot: Slot) -> Element<'_, Message> {
         let c = self.colors;
         if slot == Slot::AlbumArt {
-            // Album Art stays nearly headerless: its label only shows on hover (SPEC 4.8).
+            // Album Art stays nearly headerless: its label only shows on hover.
             let fg = if self.art_hover { c.on_surface_variant } else { Color::TRANSPARENT };
             let viz = self.art_mode == ArtMode::Visualizer;
             let toggle = |glyph: &'static str, on: bool, msg: Message| {
@@ -468,7 +468,7 @@ impl App {
                     container(label("Starts with the music", scale::BODY_MEDIUM, FONT, c.on_surface_variant)).center(Fill),
                 );
             }
-            // A click moves on to the next preset (SPEC 4.4).
+            // A click moves on to the next preset.
             return mouse_area(container(layers).padding(Padding { top: 0.0, right: 12.0, bottom: 12.0, left: 12.0 }))
                 .on_press(Message::VizNext)
                 .on_enter(Message::ArtHover(true))

@@ -1,4 +1,4 @@
-//! Column sets per pane: order, visibility, widths, and their saved form (SPEC 4.1).
+//! Column sets per pane: order, visibility, widths, and their saved form.
 
 use crate::app::Pane;
 

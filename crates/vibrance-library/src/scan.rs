@@ -26,7 +26,7 @@ use crate::{Result, ScanEvent, Track, TrackId, tags};
 
 const BATCH_SIZE: usize = 250;
 const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
-/// The first batch goes out sooner, so an import shows tracks well within 100 ms (SPEC 7.1).
+/// The first batch goes out sooner, so an import shows tracks well within 100 ms.
 const FIRST_FLUSH: Duration = Duration::from_millis(20);
 
 /// One scan at a time per process; a second request waits, then rescans.

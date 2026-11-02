@@ -188,7 +188,7 @@ const CAMPFIRE: Preset = Preset {
 };
 
 pub const PRESETS: &[Preset] = &[
-    // The campfires lead the menu (SPEC 4.4).
+    // The campfires lead the menu.
     Preset { name: "Campfire · Music", fire_tempo: 1.0, salts: 1.0, ..CAMPFIRE },
     Preset { name: "Campfire · Natural", ..CAMPFIRE },
     Preset { name: "Liquid Prism", zoom: 1.035, rot: 0.03, warp: 0.9, blur: 0.5, half_life: 0.8, chroma_warp: 0.0015, ..BASE },

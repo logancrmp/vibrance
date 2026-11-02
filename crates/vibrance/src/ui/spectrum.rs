@@ -1,4 +1,4 @@
-//! Compact bar spectrum with falling peak caps (SPEC 4.4).
+//! Compact bar spectrum with falling peak caps.
 
 use iced::mouse::Cursor;
 use iced::widget::canvas::{self, Frame, Geometry, Path};

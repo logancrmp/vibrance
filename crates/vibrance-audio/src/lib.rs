@@ -1,6 +1,6 @@
 //! Playback engine: decoding, output, gapless transitions, and the analysis tap.
 //!
-//! Audio is decoded and played inside this process (SPEC 3.2). The UI owns the
+//! Audio is decoded and played inside this process. The UI owns the
 //! queue; it tells the engine what to play now and what to join gaplessly next.
 
 use std::path::{Path, PathBuf};
@@ -27,7 +27,7 @@ use player::Command;
 pub enum Sink {
     /// The default system output device (PipeWire/Pulse via ALSA).
     Device,
-    /// Write the output stream to a WAV file instead of the sound server (SPEC 9).
+    /// Write the output stream to a WAV file instead of the sound server.
     /// With `realtime` false, output is produced as fast as decoding allows, and nothing is
     /// written while paused or stopped.
     ///
@@ -238,7 +238,7 @@ impl Tap {
     }
 }
 
-/// Per-frame audio features for the visualizers (SPEC 4.4).
+/// Per-frame audio features for the visualizers.
 #[derive(Debug, Clone, Default)]
 pub struct Analysis {
     /// Log-spaced spectrum bars, each 0..=1.

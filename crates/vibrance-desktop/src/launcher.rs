@@ -1,4 +1,4 @@
-//! The desktop entry and icon (SPEC 3.2). On Wayland the taskbar finds a window's icon
+//! The desktop entry and icon. On Wayland the taskbar finds a window's icon
 //! through its app ID, which must name an installed `.desktop` file; without one it shows a
 //! generic icon.
 //!

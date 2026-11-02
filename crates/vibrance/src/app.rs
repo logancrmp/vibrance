@@ -83,7 +83,7 @@ impl Slot {
     }
 }
 
-/// What the Album Art pane shows (SPEC 4.8): the cover, or the docked visualizer.
+/// What the Album Art pane shows: the cover, or the docked visualizer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtMode {
     Art,
@@ -320,7 +320,7 @@ pub struct App {
     pub viz_fullscreen: bool,
     /// The preset menu, anchored where it was opened.
     pub viz_menu: Option<Point>,
-    /// The full-screen overlay stays visible until this moment (SPEC 4.4 auto-hide).
+    /// The full-screen overlay stays visible until this moment.
     pub viz_ui_until: Instant,
 
     engine: Option<Arc<Engine>>,
@@ -926,7 +926,7 @@ impl App {
             self.marquee_phase += dt;
         }
 
-        // Soft spring toward the targets (SPEC 4.3 motion).
+        // Soft spring toward the targets.
         let k = 1.0 - (-dt * 16.0).exp();
         self.seek_lift += (self.lift_target() - self.seek_lift) * k;
         self.seek_drag += (self.drag_target() - self.seek_drag) * k;
@@ -1005,7 +1005,7 @@ impl App {
         self.save_layout();
     }
 
-    /// A hidden Artists or Albums pane counts as "All" (SPEC 6.2).
+    /// A hidden Artists or Albums pane counts as "All".
     fn pane_visibility_changed(&mut self) {
         if !layout::is_visible(&self.panes, Slot::List(Pane::Artists)) {
             self.sel_artists.clear();
@@ -1029,7 +1029,7 @@ impl App {
         self.jump.as_ref().filter(|j| j.pane == pane).map(|j| j.term.as_str())
     }
 
-    /// Test and screenshot hooks (SPEC 9), e.g. `artist=swo`, `activate=songs:3`, `drag=songs:2@0`.
+    /// Test and screenshot hooks, e.g. `artist=swo`, `activate=songs:3`, `drag=songs:2@0`.
     fn run_script(&mut self, step: &str) -> Task<Message> {
         let (verb, arg) = step.split_once('=').unwrap_or((step, ""));
         let pane_named = |name: &str| match name {

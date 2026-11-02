@@ -25,7 +25,7 @@ pub struct Track {
     pub folder: PathBuf,
     pub title: String,
     pub artist: String,
-    /// Album artist, falling back to the track artist (SPEC 4.1).
+    /// Album artist, falling back to the track artist.
     pub album_artist: String,
     pub album: String,
     pub track_no: Option<u32>,

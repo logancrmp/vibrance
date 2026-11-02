@@ -1,4 +1,4 @@
-//! The Rivian-style seek bar (SPEC 4.3): a thick track whose remaining part lifts
+//! The Rivian-style seek bar: a thick track whose remaining part lifts
 //! into a hump over the thumb.
 
 use iced::mouse::{self, Cursor};

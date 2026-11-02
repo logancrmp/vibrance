@@ -33,7 +33,7 @@ impl App {
             return self.dispatch(Message::VizFullscreen(!self.viz_fullscreen));
         }
         if self.viz_fullscreen {
-            // No panes are visible, so plain letters are free for visualizer controls (SPEC 4.6).
+            // No panes are visible, so plain letters are free for visualizer controls.
             self.viz_ui_until = Instant::now() + Duration::from_millis(2500);
             match key.as_ref() {
                 Key::Named(Named::Escape) => return self.dispatch(Message::VizFullscreen(false)),
