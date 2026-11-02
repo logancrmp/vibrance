@@ -2,6 +2,8 @@
 
 A fast, native music player for Linux, built with Rust and [iced](https://iced.rs).
 
+![Vibrance playing an album: the library panes, the queue, and the album art](docs/screenshot.png)
+
 ## Run
 
 ```
