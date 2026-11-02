@@ -15,7 +15,7 @@ async-channel = "2"
 log = "0.4"
 thiserror = "2"
 crossbeam-channel = "0.5"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp", "hdr"] }
 
 [profile.release]
 opt-level = 3
@@ -28,3 +28,11 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# Day-to-day optimized builds: near-release speed, but parallel and incremental.
+# `cargo run --profile fast -p vibrance`
+[profile.fast]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+incremental = true

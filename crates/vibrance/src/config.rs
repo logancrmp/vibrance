@@ -22,6 +22,8 @@ pub struct Config {
     pub title_bar: TitleBar,
     pub normalization: bool,
     pub type_to_jump_timeout_ms: u64,
+    /// Limit how fast the visualizer's brightness can change (photosensitivity).
+    pub reduce_flashing: bool,
 }
 
 impl Default for Config {
@@ -32,6 +34,7 @@ impl Default for Config {
             title_bar: TitleBar::default(),
             normalization: false,
             type_to_jump_timeout_ms: 1000,
+            reduce_flashing: true,
         }
     }
 }

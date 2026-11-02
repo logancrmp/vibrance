@@ -8,6 +8,7 @@ mod queue;
 mod theme;
 mod ui;
 mod view;
+mod viz;
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -52,6 +53,11 @@ fn main() -> iced::Result {
         }
     };
     let decorations = Config::load(&Paths::resolve()).title_bar == TitleBar::System;
+    // The taskbar finds the window's icon through its desktop entry (SPEC 3.2). Test runs
+    // leave the real home alone.
+    if std::env::var_os("VIBRANCE_HOME").is_none() && options.screenshot.is_none() && options.script.is_empty() {
+        std::thread::spawn(install_launcher);
+    }
 
     let mut application = iced::application(move || App::new(options.clone()), App::update, App::view)
         .title(App::title)
@@ -67,6 +73,10 @@ fn main() -> iced::Result {
             decorations,
             transparent: !decorations,
             exit_on_close_request: false,
+            platform_specific: window::settings::PlatformSpecific {
+                application_id: vibrance_desktop::APP_ID.to_owned(),
+                ..Default::default()
+            },
             ..window::Settings::default()
         })
         .default_font(theme::FONT)
@@ -76,6 +86,15 @@ fn main() -> iced::Result {
     }
     log::debug!("starting event loop");
     application.run()
+}
+
+fn install_launcher() {
+    let (Some(dirs), Ok(exe)) = (directories::BaseDirs::new(), std::env::current_exe()) else { return };
+    match vibrance_desktop::install_launcher(dirs.data_dir(), &exe) {
+        Ok(true) => log::info!("installed the desktop entry for {}", exe.display()),
+        Ok(false) => {}
+        Err(err) => log::warn!("cannot install the desktop entry: {err}"),
+    }
 }
 
 impl App {

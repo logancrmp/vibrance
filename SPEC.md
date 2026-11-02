@@ -103,6 +103,7 @@ Constraints:
 - **MPRIS:** Vibrance registers on D-Bus as an MPRIS media player (via `zbus`, no GTK).
   - Media keys, the desktop's media controls, and `playerctl` can pause or stop it.
   - The MPRIS handler runs off the UI thread, so these controls work even if the window hangs.
+- **Desktop entry and icon:** the window's app ID is `io.github.logancrmp.vibrance` (also MPRIS's `DesktopEntry`). On Wayland the taskbar finds the icon through a desktop entry of that name, so at startup Vibrance writes one (launching the running binary) and its icon to `~/.local/share/applications` and `~/.local/share/icons/hicolor/scalable/apps`, off the UI thread and only when they changed. Test runs (`VIBRANCE_HOME`, `--script`, `--screenshot`) skip this.
 
 **Signal path:** decode → resample (`rubato`, only when needed) → normalization gain (if on) → visualizer tap → volume → output.
 
@@ -269,13 +270,15 @@ There are two visualizers:
 
 | | Bar spectrum | Feedback visualizer |
 |---|---|---|
-| Where | Compact, in the now-playing strip | The **Visualizer** pane (6.2, hidden by default) and full screen |
-| Look | Frequency bars with falling peak caps, in palette colors (5.3) | MilkDrop-style: warped trails, waveforms, and shapes, with full-spectrum color cycling. Ignores the palette. |
+| Where | Compact, in the now-playing strip | Docked in the Album Art pane (toggle in its header, 4.8) and full screen |
+| Look | Frequency bars with falling peak caps, in palette colors (5.3) | MilkDrop-style: warped trails, waveforms, and shapes, with full-spectrum color cycling, viewed in 3D and lit. Plus a simulated campfire. Ignores the palette. |
 | Drawn with | iced `Canvas` | wgpu shaders |
 
 **Full screen:**
-- Entered by clicking the compact spectrum, the Visualizer pane's full-screen button, or F11. Escape exits.
+- Entered by clicking the compact spectrum, the full-screen button in the Album Art pane's header, or F11. Escape exits.
 - Fills the whole monitor.
+
+**Choosing presets:** clicking the visualizer (docked or full screen) moves to the next preset in the list. A dropdown showing the preset's name (in the Album Art pane's header, and in the full-screen controls) lists every preset: choosing one stays on it, and "Automatic" lets presets change by themselves again.
 
 **Mockup:** the "Full-screen visualizer" board in the mockups is a working WebGL prototype of this engine. Port its shaders to WGSL rather than redesigning them.
 
@@ -287,12 +290,36 @@ There are two visualizers:
 - **Beats:** spectral-flux onset detection with an adaptive threshold, plus a tempo estimate. Each beat event carries a strength.
 - **Waveform:** the latest 512 samples, mixed to mono.
 
-**Feedback visualizer engine.** Each frame runs three passes:
+**Feedback visualizer engine.** The feedback loop advances in fixed 60 Hz steps (MilkDrop's own rate); everything after it runs every displayed frame. Each step runs:
 1. **Warp.** The previous frame is sampled through a per-pixel map and written to a second buffer (ping-pong). This is what leaves the trails.
-   - The map combines zoom, rotation, swirl, sine warp, drift, and an optional kaleidoscope fold.
-   - The sample gets a light blur, a hue rotation, and decay.
-2. **Draw.** New geometry is added with additive blending: the waveform (as a ring or a line), beat-pulsed polygons, and treble sparkles. Colors cycle through the full hue range.
-3. **Present.** A soft tone curve, a beat flash, and a vignette.
+   - The map follows MilkDrop 2's equations: zoom with zoomexp, rotation, MilkDrop's four-term animated warp, dx/dy. On top: swirl, vortex, saddle field, kaleidoscope folds, mirroring, and mirror-wrapped edges.
+   - The previous frame is read with a Catmull-Rom bicubic filter, so repeated resampling doesn't blur the trails a little more every step.
+   - The sample gets blur or sharpening (reaction-diffusion, at a fixed scale of 1/900 of the height whatever the resolution), warp chroma fringing, a hue rotation, decay (as a half-life), and an optional dark centre.
+2. **Draw.** New geometry is added with additive blending: the waveform (as a ring or a line, a crisp anti-aliased core over a soft neon halo), beat-pulsed polygons, and treble sparkles. Colors cycle through the full hue range.
+
+Then, every displayed frame, so camera motion is smooth at any refresh rate:
+3. **3D view.** The feedback is looked at in one of three ways, blended between presets:
+   - **Flat**, through a lens that shrinks the centre, so the outward flow seems to come from far away.
+   - **Tunnel:** flying down a tube lined with the picture, with twist.
+   - **Corridor:** flying between a floor and a ceiling lined with it.
+   Flight speed follows the tempo and surges on kicks; the far end fades into a haze of the picture's average colour; the feedback's mip chain keeps the distance from shimmering.
+4. **Lighting.** The picture is lit as a glossy surface whose height is its own brightness (bump mapping with a specular highlight), so ridges and trails stand out in relief. Then video echo (a zoomed, optionally flipped copy) and cosine-palette mapping.
+5. **To the screen:** chromatic aberration, light sharpening, bloom (a mip chain whose glow only adds light, so bright areas keep their detail), a filmic tone curve (deep blacks, soft highlight roll-off), per-channel gamma, a bounded beat flash, a vignette, and dither against banding.
+
+**Campfire presets.** An open fire at night in a photo-scanned stone fire pit, rendered as a small physically based 3D scene (`viz/campfire/`). It's built at full quality first, to be tuned down where that costs least visually.
+- **The scene:** CC0 photo-scans from Poly Haven: the stone fire pit (a dug bowl inside a ring of stones), firewood cut from a scanned trunk (a log-cabin base with a teepee over it), a big log beside the pit to sit on, pine-needle forest floor, and an 8K night-sky photo with a treeline. `scripts/fetch-campfire-assets.py` downloads them (about 290 MB) to `~/.local/share/vibrance/scenes/campfire`; they load on a background thread the first time a campfire shows. Without them the fire still burns, over plain ground.
+- **The flames are a 3D gas simulation** on a 192×288×192 grid (6 mm cells) over the pit, at a fixed 60 steps a second, the way EmberGen and Unreal's Niagara Fluids make real-time fire: Stam's Stable Fluids on the GPU with MacCormack advection (GPU Gems 3 ch. 30), a five-level multigrid pressure solve, buoyancy, vorticity confinement, and fuel, combustion and soot after Nguyen, Fedkiw & Jensen (2002). Wood gas jets from patches on the logs' surfaces and from the coal bed, burns into heat and soot, rises and curls; soot glows while hot, burns off at the tips, and what survives drifts off as thinning smoke, as does wood gas that escapes unburnt. The logs and the pit are solid (their shape is baked into a texture once). The sides and top are open: whatever flows in is still night air, never a copy of the edge (copying it let a downdraft at the top feed itself until it pinned the fire below the wood).
+- **The flames as drawn are twice as fine** (a 384×576×384 grid, 3 mm cells), after Kim et al.'s wavelet turbulence (2008): the same chemistry re-run on the finer grid, carried by the coarse flow (smoothly interpolated, so its cells don't crease the gas) plus gentle eddies too small for the coarse grid (curl noise as strong as the coarse flow spins there). The coarse grid's 6 mm cells, filtered, blurred every flame edge; stronger or finer eddies shred the flames into a mottled texture. Only 8³ blocks where the coarse gas has something in it run (about a third); the rest stay night air.
+- **Rendering:** the flames are ray-marched through the volume as glowing soot (it emits what it absorbs, by Planck's law at its temperature, from a blackbody table computed from Planck's law and the CIE 1931 observer), skipping empty blocks. Smoke absorbs and catches firelight. The scene is lit by the fire itself: its glow is summed into 96 point lights plus the coals, with soft shadows sized to the fire's spread; flames above the rim light the ground behind the stones. The shadows are cast from the fire's centre, and nothing that casts them moves, so they're baked once, from a six-face shadow map with 64 taps a point, into two 3D grids (8 mm voxels around the pit, 2.6 cm out past the big log) that shading reads in one filtered tap. A camera exposure adapts to the fire's total light over a few seconds, making up for most of any lasting change, so flicker and kicks still flare but a fire the music keeps pumping doesn't burn out the picture. Materials are physically based (GGX); the firewood chars, gets pale ash on top, and glows in its bark's crevices where the simulated flames touch it. Sparks are GPU particles carried by the simulated air, cooling as they rise, drawn as motion-blurred streaks.
+- **Drawing only what changed:** the scene changes only when the simulation steps (60 times a second), so it's drawn into a cache once per step and each displayed frame copies it and draws the sparks over it at the display's rate. Above 100 Hz the draw goes on a frame between steps, so the two never share a frame (at 120 Hz they alternate); slower displays draw on the step's own frame.
+- **Colour:** *Natural* is always fire-coloured: pure blackbody. *Music* throws salts on the fire: their emission lines (copper, boron, barium, cesium, potassium, lithium, strontium, indium), converted through the CIE observer, colour the hottest burned gas and tint the firelight. Each spot on the pile gives off its own salt, and the pair of salts changes every eight bars.
+- **The music:** fuel follows loudness and kicks, the spectrum sets how hard each part of the pile burns (around the pit, bass at the front), the coals and the embers glow with the bass, and sparks fly on strong beats.
+- **Two versions differ in flicker speed** (and salts). *Natural* runs the simulation in real time, so the flames puff at a real campfire's pace. *Music* runs it faster or slower with the song's tempo and energy.
+- **Cost:** on the reference RTX 5090 at 5120×1440, a simulation step takes about 4 ms (2.3 coarse, 1.6 fine) and drawing the scene about 2.8 ms (meshes 1.5, flames 1.3), each once per step; the frames between cost 0.04 ms. Whole visualizer frames at 120 Hz alternate about 4.8 and 3.7 ms (8.3 ms allowed); at 144 Hz the worst is 6 ms (6.9 allowed), at 60 Hz 7.8 ms. About 4.5 GB of video memory. It only runs while a campfire is showing, and lets the memory go 30 s after. `CAMPFIRE_TIMING`, `CAMPFIRE_SERIES`, `CAMPFIRE_RATE` and `CAMPFIRE_KICKS` on the `snapshot` test print each pass's GPU time, the brightness, flames' height and airflow over time, run the flicker faster and pump it with kicks; `VIZ_HZ` and `VIZ_TIMING` on `presets_render` time whole frames at a display rate.
+
+**Photosensitivity (WCAG 2.3.1):** a 3×3 grid of screen tiles is measured on the GPU each frame (from the scene's smallest mip), and each tile's shown luminance may change by at most 0.6 per second (a gain map in the final pass). A bad sample (NaN) never sticks in the limiter. That keeps the output under three flashes per second. Beat flashes are capped, preset morphs take two bars, and there are no hard cuts. **Reduce flashing** (Settings → Playback) is on by default.
+
+**Credits:** the warp follows MilkDrop 2 (BSD, © Nullsoft) and Butterchurn (MIT, © Jordan Berg). Several presets recreate techniques from well-known MilkDrop presets; no preset files are copied. The fire follows GPU Gems 3 ch. 30, Nguyen, Fedkiw & Jensen (2002) and Kim et al. (2008), with tricubic filtering after Sigg & Hadwiger (GPU Gems 2 ch. 20) and colour matching functions from Wyman, Sloan & Shirley (JCGT 2013); its assets are CC0 from Poly Haven. The bloom downsample is Jimenez's (Call of Duty: Advanced Warfare).
 
 **What the audio drives:**
 - Bass → zoom and pulse.
@@ -307,13 +334,14 @@ There are two visualizers:
   - Look: decay, hue speed, kaleidoscope folds, and blur.
   - Audio-response gains.
   - Drawn elements: waveform shape, shape sides, and sparkles.
-- **Built-in set:** at least 12 presets ship. The mockup's 8 are the starting set.
+- **Built-in set:** 28 presets ship, from research recipes (e.g. Desert Bloom, Fractal Mirror, Hyperspace Kaleido, Hurricane, Infinity Frames, Songflower, Oil Slick, Mandala Breath), the mockup's set, 3D flights (Wormhole, Neon Corridor, Bass Tunnel), Liquid Chrome and Fractal Dive, and the two campfires.
 - **Randomness:** every parameter wanders slowly within its preset's range, seeded per session, so a preset never looks the same twice.
 - **Switching:**
-  - Every 24–48 beats, Vibrance picks a random preset (never the current one) and switches on a beat.
-  - Parameters morph over ~3 s. Discrete parameters (fold count, shape sides) switch at the midpoint.
+  - Every 12–24 bars, Vibrance picks a random preset (never the current one) and switches on a bar boundary.
+  - Parameters morph over two bars with MilkDrop's cosine ease. Discrete parameters (fold count, shape sides, echo flips) switch at the midpoint.
+- **Tempo tracking:** BPM is folded into 75–150 and glides; a beat clock phase-locks to detected onsets. Audio modulates the *rate* of motion clocks (never positions), and kicks add a short zoom burst (τ 0.18 s).
 - **Controls in full screen:**
-  - N: next preset.
+  - Click or N: next preset in the list.
   - L: lock the current preset, which stops auto-switching.
   - Space: play/pause.
   - Escape: exit.
@@ -327,10 +355,14 @@ There are two visualizers:
 - **Auto-hide:** the overlay and the cursor hide after 2.5 s without mouse movement, and return on movement.
 
 **Render resolution:**
-- The internal render scale adapts to hold the display refresh rate. It goes as low as 50% and is upscaled to the output.
+- Native: one texel per device pixel, aligned to whole pixels, up to 3840×2160 worth of pixels (a 5120×1440 ultrawide fits). Larger areas render at that budget and are upscaled with extra sharpening.
+- Effects that work in pixels (blur, sharpening, relief) use a fixed fraction of the height instead, so the look is the same at any size.
 - The reference machine is expected to run at full resolution at 120 Hz.
 
+**Tempo and pace:** motion (zoom, rotation, warp animation, hue drift) is defined per beat at the song's tempo, folded into 80–160 BPM and smoothed, times a calm global pace. Nothing is defined per frame, so 60 Hz and 120 Hz look the same. Light added by waveforms and shapes is scaled to frame time for the same reason.
+
 **Redraw policy:**
+- **Only when on screen:** the feedback visualizer does no work unless it is visible (full screen, or the Album Art pane switched to Visualizer). With the cover showing, neither the engine nor the GPU runs for it.
 - **Playing:** visible visualizers redraw at the display refresh rate.
 - **Seek bar:** redraws while it is animating, or when the playhead has moved at least ¼ physical pixel.
 - **Paused:** the feedback visualizer keeps running for ~2 s so the trails fade out, then stops.
@@ -396,7 +428,7 @@ There are two visualizers:
 | Rescan | F5 |
 | Settings | Ctrl+, |
 | Full-screen visualizer | F11 (Escape also exits) |
-| In full-screen visualizer: next preset / lock preset | N / L (no pane has focus there, so printable keys are free) |
+| In full-screen visualizer: next preset / lock preset | Click or N / L (no pane has focus there, so printable keys are free) |
 | Quit | Ctrl+Q |
 
 **Global media keys** (Play/Pause, Stop, Next, Previous):
@@ -422,7 +454,8 @@ There are two visualizers:
 
 ### 4.8 Album Art pane
 
-- **What it is:** a dockable pane (6.2) showing the current track's art.
+- **What it is:** a dockable pane (6.2) showing the current track's art, or the docked visualizer (4.4).
+- **Art / Visualizer toggle:** two small icon buttons in the pane's header switch between the cover and the visualizer; the choice is remembered. In visualizer mode the header also has the preset dropdown and a full-screen button, and clicking the visualizer moves to the next preset.
 - **Sizing:** the art is the largest square that fits inside the pane's 12 px padding. It is centered, with Medium (12 px) corners.
 - **Default:** shown, under Queue in the right column (5.2). It is hidden and shown from the Layout menu.
 - **Nearly headerless,** so the art gets almost all the space.
@@ -567,7 +600,7 @@ Vibrance follows **Material 3** (https://m3.material.io/). Where this section is
 
 ### 6.2 Layout
 
-**Panes:** Now Playing, Artists, Albums, Songs, Queue, Album Art, Visualizer.
+**Panes:** Now Playing, Artists, Albums, Songs, Queue, Album Art (which can show the visualizer instead).
 
 **Rearranging:**
 - Drag a pane by its header.
@@ -747,4 +780,10 @@ _None currently._
 | 2026-11-01 | Album Art pane: dockable and headerless, under Queue by default. Chosen over a taller top bar. |
 | 2026-11-01 | Visualizer pane and full screen use a MilkDrop-style feedback engine of our own in wgpu (not projectM). The bar spectrum stays in the now-playing strip. |
 | 2026-11-01 | Launch target relaxed to ≤ 300 ms (GPU driver start-up dominates). Do not patch iced's GPU setup. Vibrance's own start-up work ≤ 20 ms. |
+| 2026-11-01 | The docked visualizer shares the Album Art pane via a toggle. It renders only while visible. Motion follows the song's tempo at a calm pace. |
+| 2026-11-01 | The visualizer renders at native resolution with bicubic feedback, anti-aliased lines, relief lighting, bloom, and a filmic curve; 3D tunnel and corridor views give a sense of falling in. A preset dropdown and click-to-advance make presets easy to pick. |
+| 2026-11-01 | The campfire is a real-time 3D gas simulation (fuel, combustion, soot, buoyancy, vorticity confinement, multigrid pressure) ray-marched as glowing soot, in a scene of CC0 photo-scanned assets lit by the fire. Scrolling noise and a 2D simulation both looked fake. Built at full quality first, to tune down later. Natural is always fire-coloured; the music version adds salt colours. |
+| 2026-11-01 | The campfire scene is drawn once per simulation step into a cache, on a frame of its own at over 100 Hz; its shadows are baked once into 3D grids; and a camera exposure tames fires pumped by loud music. Redrawing an unchanged scene at 120 Hz, and 24 shadow-map taps a pixel, were most of the frame; pumping music tripled the brightness. |
+| 2026-11-01 | The flames are drawn from a second grid twice as fine, carried by the simulation's flow (wavelet-turbulence style), and only where there's gas. 6 mm cells read as low resolution next to 4K scans; doubling the whole simulation would cost 8×. |
+| 2026-11-01 | The window's Wayland app ID is `io.github.logancrmp.vibrance`; Vibrance keeps a matching desktop entry and icon in `~/.local/share` so the taskbar shows its icon. |
 | 2026-11-01 | Double-clicking a song queues the whole Songs pane and plays from the clicked song's position. Long playing titles scroll instead of truncating. The Queue title drops its count. |

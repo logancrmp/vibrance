@@ -26,6 +26,7 @@ use crate::persist::Persist;
 use crate::queue::Queue;
 use crate::theme::{ColorMode, Colors, PaletteChoice};
 use crate::ui::spectrum;
+use crate::viz;
 
 pub use services::{Channel, MprisLink, WatcherLink};
 
@@ -80,6 +81,13 @@ impl Slot {
             Slot::AlbumArt => "Album Art",
         }
     }
+}
+
+/// What the Album Art pane shows (SPEC 4.8): the cover, or the docked visualizer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtMode {
+    Art,
+    Visualizer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +157,15 @@ pub enum Message {
     PaneResized(pane_grid::ResizeEvent),
     PaneDragged(pane_grid::DragEvent),
     ArtHover(bool),
+    SetArtMode(ArtMode),
+    VizFullscreen(bool),
+    VizNext,
+    VizLock,
+    /// Open (at the cursor) or close the preset menu.
+    VizMenu(bool),
+    /// A preset to stay on, or `None` to change automatically again.
+    VizPick(Option<usize>),
+    ToggleReduceFlashing,
 
     PlayPause,
     Stop,
@@ -297,6 +314,14 @@ pub struct App {
     pub delay_input: String,
     pub notice: Option<String>,
     pub art_hover: bool,
+    pub art_mode: ArtMode,
+    pub viz: viz::Engine,
+    pub viz_frame: Arc<viz::Frame>,
+    pub viz_fullscreen: bool,
+    /// The preset menu, anchored where it was opened.
+    pub viz_menu: Option<Point>,
+    /// The full-screen overlay stays visible until this moment (SPEC 4.4 auto-hide).
+    pub viz_ui_until: Instant,
 
     engine: Option<Arc<Engine>>,
     engine_init: Option<std::thread::JoinHandle<Result<Engine, vibrance_audio::Error>>>,
@@ -356,9 +381,10 @@ impl App {
         paths.create();
         let config = Config::load(&paths);
 
-        const KEYS: [&str; 8] = ["queue", "volume", "position_ms", "layout", "columns.artists", "columns.albums", "columns.songs", "columns.queue"];
+        const KEYS: [&str; 9] =
+            ["queue", "volume", "position_ms", "layout", "columns.artists", "columns.albums", "columns.songs", "columns.queue", "art_pane"];
         let library = Library::open(&paths.database());
-        let (tracks, saved): (Vec<Track>, [Option<String>; 8]) = match &library {
+        let (tracks, saved): (Vec<Track>, [Option<String>; 9]) = match &library {
             Ok(lib) => (
                 lib.tracks().unwrap_or_else(|err| {
                     log::error!("cannot load library: {err}");
@@ -404,6 +430,7 @@ impl App {
         let position = saved[2].as_deref().and_then(|s| s.parse().ok()).map(Duration::from_millis).unwrap_or_default();
 
         let colors = target_colors(&config, None, true);
+        let reduce_flashing = config.reduce_flashing;
         let now = Instant::now();
         let mut app = App {
             persist: Persist::spawn(paths.database()),
@@ -441,6 +468,12 @@ impl App {
             folders: Vec::new(),
             notice: None,
             art_hover: false,
+            art_mode: if saved[8].as_deref() == Some("viz") { ArtMode::Visualizer } else { ArtMode::Art },
+            viz: viz::Engine::new(reduce_flashing),
+            viz_frame: Arc::new(viz::Frame::default()),
+            viz_fullscreen: false,
+            viz_menu: None,
+            viz_ui_until: now,
             engine: None,
             engine_init,
             tap: None,
@@ -604,6 +637,37 @@ impl App {
             }
             Message::PaneDragged(_) => {}
             Message::ArtHover(h) => self.art_hover = h,
+            Message::SetArtMode(mode) => {
+                self.art_mode = mode;
+                self.persist.state("art_pane", if mode == ArtMode::Visualizer { "viz" } else { "art" }.to_owned());
+            }
+            Message::VizFullscreen(on) => {
+                self.viz_fullscreen = on;
+                self.menu = Menu::Closed;
+                self.context = None;
+                self.viz_menu = None;
+                self.viz_ui_until = Instant::now() + Duration::from_millis(2500);
+                let mode = if on { window::Mode::Fullscreen } else { window::Mode::Windowed };
+                return self.with_window(move |id| window::set_mode(id, mode));
+            }
+            Message::VizNext => self.viz.next_preset(),
+            Message::ToggleReduceFlashing => {
+                self.config.reduce_flashing = !self.config.reduce_flashing;
+                self.viz.reduce_flashing = self.config.reduce_flashing;
+                self.save_config();
+            }
+            Message::VizLock => self.viz.locked = !self.viz.locked,
+            Message::VizMenu(open) => {
+                self.viz_menu = open.then_some(self.cursor);
+                self.viz_ui_until = Instant::now() + Duration::from_millis(2500);
+            }
+            Message::VizPick(pick) => {
+                self.viz_menu = None;
+                match pick {
+                    Some(index) => self.viz.pick(index),
+                    None => self.viz.locked = false,
+                }
+            }
 
             Message::PlayPause => self.play_pause(),
             Message::Stop => self.stop(),
@@ -788,6 +852,32 @@ impl App {
             || self.jump.is_some()
             || self.screenshot.is_some()
             || !self.first_frame_seen
+            || (self.viz_visible() && self.viz.active())
+    }
+
+    /// The visualizer renders only while on screen: full screen, or the Album Art pane in
+    /// visualizer mode. Otherwise neither the engine nor the GPU does any work for it.
+    /// The full-screen overlay shows while the mouse or keyboard was used recently.
+    pub fn viz_ui_visible(&self) -> bool {
+        self.viz_menu.is_some() || self.last_frame <= self.viz_ui_until
+    }
+
+    pub fn viz_visible(&self) -> bool {
+        self.viz_fullscreen || (self.art_mode == ArtMode::Visualizer && layout::is_visible(&self.panes, Slot::AlbumArt))
+    }
+
+    /// Width / height of the visualizer area, for laying out its shapes.
+    fn viz_aspect(&self) -> f32 {
+        let size = self.window_size;
+        if self.viz_fullscreen {
+            return size.width / size.height.max(1.0);
+        }
+        let top = if self.custom_title_bar() { 40.0 } else { 8.0 };
+        let grid = Size::new(size.width - 16.0, size.height - top - 104.0 - 16.0);
+        let regions = self.panes.layout().pane_regions(8.0, 0.0, grid);
+        layout::find(&self.panes, Slot::AlbumArt)
+            .and_then(|p| regions.get(&p))
+            .map_or(1.0, |r| (r.width - 24.0).max(1.0) / (r.height - 40.0).max(1.0))
     }
 
     fn lift_target(&self) -> f32 {
@@ -811,16 +901,24 @@ impl App {
         self.last_frame = now;
         self.poll_status();
 
+        let viz_on = self.viz_visible();
+        let aspect = if viz_on { self.viz_aspect() } else { 1.0 };
         match (&self.tap, &mut self.analyzer, self.play_state) {
             (Some(tap), Some(analyzer), PlayState::Playing) => {
                 let analysis = analyzer.update(tap, Duration::from_secs_f32(dt));
                 self.bars.clear();
                 self.bars.extend_from_slice(&analysis.bars);
                 self.bars.resize(SPECTRUM_BARS, 0.0);
+                if viz_on {
+                    self.viz_frame = self.viz.update(dt, Some(analysis), aspect);
+                }
             }
             _ => {
                 let k = (-dt * 8.0).exp();
                 self.bars.iter_mut().for_each(|b| *b *= k);
+                if viz_on && self.viz.active() {
+                    self.viz_frame = self.viz.update(dt, None, aspect);
+                }
             }
         }
         spectrum::update_peaks(&self.bars, &mut self.peaks, dt);
@@ -1044,6 +1142,23 @@ impl App {
                     other => Slot::List(pane_named(other)),
                 };
                 self.dispatch(Message::TogglePane(slot))
+            }
+            "viz" => self.dispatch(Message::SetArtMode(ArtMode::Visualizer)),
+            "fullscreen" => {
+                // Screenshot hook: the full-screen layout without taking over the monitor.
+                self.viz_fullscreen = true;
+                self.viz_ui_until = Instant::now() + Duration::from_secs(60);
+                Task::none()
+            }
+            "viz-next" => self.dispatch(Message::VizNext),
+            "viz-menu" => {
+                self.cursor = Point::new(1500.0, 40.0);
+                self.dispatch(Message::VizMenu(true))
+            }
+            "preset" => {
+                self.viz.select(arg);
+                self.viz.locked = true;
+                Task::none()
             }
             "normalize" => {
                 self.toggle_normalization();

@@ -21,3 +21,12 @@ toml = "1"
 env_logger = "0.11"
 tokio = { version = "1", features = ["time"] }
 unicode-normalization = "0.1"
+wgpu = "27"
+bytemuck = { version = "1", features = ["derive"] }
+glam = { version = "0.30", features = ["bytemuck"] }
+gltf = "1.4"
+half = { version = "2", features = ["bytemuck"] }
+
+[dev-dependencies]
+naga = { version = "27", features = ["wgsl-in"] }
+pollster = "0.4"

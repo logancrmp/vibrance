@@ -2,13 +2,13 @@
 
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{
-    Space, button, canvas, column, container, image, mouse_area, pane_grid, pin, responsive, row, scrollable, space, stack,
+    Space, button, canvas, column, container, image, mouse_area, opaque, pane_grid, pin, responsive, row, scrollable, space, stack,
     text_input,
 };
 use iced::{Alignment, Background, Border, Color, Element, Fill, Length, Padding, Point, Shadow, Vector, border, mouse, window};
 use vibrance_audio::PlayState;
 
-use crate::app::{Action, App, ContextKind, Menu, Message, Pane, Slot, thousands};
+use crate::app::{Action, App, ArtMode, ContextKind, Menu, Message, Pane, Slot, thousands};
 use crate::columns::{ColId, defs};
 use crate::config::TitleBar;
 use crate::layout;
@@ -22,6 +22,7 @@ use crate::ui::swatch::Swatch;
 use crate::ui::table::{self, Cell, Table, Tone};
 use crate::ui::volume::Volume;
 use crate::ui::{fit, floating, icon, icon_button, label, state_button, surface};
+use crate::viz;
 
 const MENU_W: f32 = 248.0;
 const ITEM_H: f32 = 40.0;
@@ -36,6 +37,9 @@ enum Trailing {
 
 impl App {
     pub fn view(&self) -> Element<'_, Message> {
+        if self.viz_fullscreen {
+            return self.viz_fullscreen_view();
+        }
         let colors = self.colors;
         let mut content = column![].width(Fill).height(Fill);
         if self.custom_title_bar() {
@@ -70,6 +74,9 @@ impl App {
         }
         if self.settings {
             layers = layers.push(self.settings_dialog());
+        }
+        if self.viz_menu.is_some() {
+            layers = layers.push(self.viz_menu());
         }
         layers.into()
     }
@@ -141,21 +148,12 @@ impl App {
         .spacing(4)
         .align_y(Alignment::Center);
 
-        let fraction = self.displayed_fraction();
-        let duration = self.duration.unwrap_or_default();
-        let shown = duration.mul_f32(fraction.clamp(0.0, 1.0));
-        let seek = column![
-            canvas(SeekBar { fraction, lift: self.seek_lift, drag: self.seek_drag, colors: c, enabled: track.is_some() }).width(Fill).height(seek::HEIGHT),
-            row![
-                label(format_duration(shown.as_millis() as u64), scale::LABEL_MEDIUM, FONT_MEDIUM, c.on_surface_variant),
-                space().width(Fill),
-                label(format!("-{}", format_duration(duration.saturating_sub(shown).as_millis() as u64)), scale::LABEL_MEDIUM, FONT_MEDIUM, c.on_surface_variant),
-            ]
-            .padding([0.0, 2.0]),
-        ]
-        .width(Fill);
+        let seek = self.seek_column(track.is_some());
 
-        let spectrum = container(canvas(Spectrum { bars: &self.bars, peaks: &self.peaks, colors: c, gap: 2.0 }).width(168).height(48)).padding(4);
+        // Clicking the compact spectrum opens the full-screen visualizer (SPEC 4.4).
+        let spectrum = mouse_area(container(canvas(Spectrum { bars: &self.bars, peaks: &self.peaks, colors: c, gap: 2.0 }).width(168).height(48)).padding(4))
+            .on_press(Message::VizFullscreen(true))
+            .interaction(mouse::Interaction::Pointer);
 
         let volume_value = if self.muted { 0.0 } else { self.volume };
         let volume_icon = if self.muted || volume_value == 0.0 {
@@ -181,6 +179,26 @@ impl App {
             .align_y(Alignment::Center)
             .style(surface(c.surface_container, shape::LARGE))
             .into()
+    }
+
+    fn seek_column(&self, enabled: bool) -> Element<'_, Message> {
+        let c = self.colors;
+        let fraction = self.displayed_fraction();
+        let duration = self.duration.unwrap_or_default();
+        let shown = duration.mul_f32(fraction.clamp(0.0, 1.0));
+        column![
+            canvas(SeekBar { fraction, lift: self.seek_lift, drag: self.seek_drag, colors: c, enabled }).width(Fill).height(seek::HEIGHT),
+            row![
+                label(format_duration(shown.as_millis() as u64), scale::LABEL_MEDIUM, FONT_MEDIUM, c.on_surface_variant).width(64),
+                space().width(Fill),
+                label(format!("-{}", format_duration(duration.saturating_sub(shown).as_millis() as u64)), scale::LABEL_MEDIUM, FONT_MEDIUM, c.on_surface_variant)
+                    .width(64)
+                    .align_x(Horizontal::Right),
+            ]
+            .padding([0.0, 2.0]),
+        ]
+        .width(Fill)
+        .into()
     }
 
     fn pane_grid(&self) -> Element<'_, Message> {
@@ -214,8 +232,23 @@ impl App {
         if slot == Slot::AlbumArt {
             // Album Art stays nearly headerless: its label only shows on hover (SPEC 4.8).
             let fg = if self.art_hover { c.on_surface_variant } else { Color::TRANSPARENT };
-            let bar = row![icon("drag_indicator", 18.0, fg), label("Album Art", scale::LABEL_MEDIUM, FONT_MEDIUM, fg)].spacing(4).align_y(Alignment::Center);
-            return mouse_area(container(bar).height(28).width(Fill).padding(Padding { top: 6.0, right: 0.0, bottom: 0.0, left: 10.0 }))
+            let viz = self.art_mode == ArtMode::Visualizer;
+            let toggle = |glyph: &'static str, on: bool, msg: Message| {
+                let (fg, fill) = if on { (c.on_secondary_container, Some(c.secondary_container)) } else { (c.on_surface_variant, None) };
+                icon_button(glyph, 26.0, 16.0, fg, fill, 13.0, Some(msg))
+            };
+            let title = if viz { "Visualizer" } else { "Album Art" };
+            let mut bar = row![icon("drag_indicator", 18.0, fg), label(title, scale::LABEL_MEDIUM, FONT_MEDIUM, fg), space().width(Fill)]
+                .spacing(4)
+                .align_y(Alignment::Center);
+            if viz {
+                bar = bar
+                    .push(self.preset_chip(26.0, 140.0))
+                    .push(icon_button("open_in_full", 26.0, 16.0, c.on_surface_variant, None, 13.0, Some(Message::VizFullscreen(true))));
+            }
+            let bar = bar
+                .push(row![toggle("image", !viz, Message::SetArtMode(ArtMode::Art)), toggle("graphic_eq", viz, Message::SetArtMode(ArtMode::Visualizer))].spacing(2));
+            return mouse_area(container(bar).height(34).width(Fill).padding(Padding { top: 4.0, right: 8.0, bottom: 0.0, left: 10.0 }))
                 .on_enter(Message::ArtHover(true))
                 .on_exit(Message::ArtHover(false))
                 .on_right_press(Message::PaneMenu(slot))
@@ -427,6 +460,21 @@ impl App {
 
     fn album_art(&self) -> Element<'_, Message> {
         let c = self.colors;
+        if self.art_mode == ArtMode::Visualizer {
+            let shader = iced::widget::shader(viz::gpu::Program { frame: self.viz_frame.clone() }).width(Fill).height(Fill);
+            let mut layers = stack![shader].width(Fill).height(Fill);
+            if !self.viz.active() {
+                layers = layers.push(
+                    container(label("Starts with the music", scale::BODY_MEDIUM, FONT, c.on_surface_variant)).center(Fill),
+                );
+            }
+            // A click moves on to the next preset (SPEC 4.4).
+            return mouse_area(container(layers).padding(Padding { top: 0.0, right: 12.0, bottom: 12.0, left: 12.0 }))
+                .on_press(Message::VizNext)
+                .on_enter(Message::ArtHover(true))
+                .on_exit(Message::ArtHover(false))
+                .into();
+        }
         let content: Element<'_, Message> = match &self.art {
             Some(art) if Some(art.track) == self.queue.now => {
                 let handle = art.large.clone();
@@ -658,6 +706,139 @@ impl App {
         pin(ghost).x(self.cursor.x + 14.0).y(self.cursor.y + 10.0).into()
     }
 
+    // ---- full-screen visualizer ----
+
+    fn viz_fullscreen_view(&self) -> Element<'_, Message> {
+        let c = self.colors;
+        let glass = |radius: f32| {
+            move |_: &iced::Theme| container::Style {
+                background: Some(Background::Color(theme::alpha(c.surface_container, 0.82))),
+                border: border::rounded(radius),
+                text_color: Some(c.on_surface),
+                ..container::Style::default()
+            }
+        };
+        let shader = iced::widget::shader(viz::gpu::Program { frame: self.viz_frame.clone() }).width(Fill).height(Fill);
+        let screen = container(shader).width(Fill).height(Fill).style(surface(Color::BLACK, 0.0));
+        let mut layers = stack![mouse_area(screen).on_press(Message::VizNext)].width(Fill).height(Fill);
+
+        // The preset's name shows briefly whenever it changes.
+        if self.viz.since_change() < 3.0 {
+            let toast = container(row![icon("auto_awesome", 18.0, c.primary), label(self.viz.preset_name(), scale::TITLE_SMALL, FONT_MEDIUM, c.on_surface)].spacing(8).align_y(Alignment::Center))
+                .padding(Padding { top: 6.0, right: 14.0, bottom: 6.0, left: 10.0 })
+                .style(glass(12.0));
+            layers = layers.push(container(toast).padding(Padding { top: 16.0, right: 0.0, bottom: 0.0, left: 20.0 }));
+        }
+
+        if self.viz_ui_visible() {
+            let lock = self.viz.locked;
+            let (lock_fg, lock_fill) = if lock { (c.on_secondary_container, Some(c.secondary_container)) } else { (c.on_surface_variant, None) };
+            let controls = container(
+                row![
+                    self.preset_chip(32.0, 220.0),
+                    label("Click or N next · L lock · Esc exit", scale::LABEL_MEDIUM, FONT_MEDIUM, c.on_surface_variant),
+                    icon_button("auto_awesome", 40.0, 22.0, c.on_surface_variant, None, 20.0, Some(Message::VizNext)),
+                    icon_button(if lock { "lock" } else { "lock_open" }, 40.0, 22.0, lock_fg, lock_fill, 20.0, Some(Message::VizLock)),
+                    icon_button("close_fullscreen", 40.0, 22.0, c.on_surface_variant, None, 20.0, Some(Message::VizFullscreen(false))),
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center),
+            )
+            .padding(Padding { top: 4.0, right: 4.0, bottom: 4.0, left: 6.0 })
+            .style(glass(24.0));
+            // Clicks on the controls' glass don't fall through to the visualizer.
+            layers = layers.push(container(opaque(controls)).width(Fill).align_x(Horizontal::Right).padding(Padding { top: 12.0, right: 16.0, bottom: 0.0, left: 0.0 }));
+
+            let track = self.queue.now.and_then(|id| self.model.track(id));
+            let art: Element<'_, Message> = match &self.art {
+                Some(art) if Some(art.track) == self.queue.now => {
+                    image(art.small.clone()).width(64).height(64).content_fit(iced::ContentFit::Cover).border_radius(shape::MEDIUM).into()
+                }
+                _ => container(icon("album", 30.0, c.on_surface_variant)).center(64).style(surface(c.surface_container_highest, shape::MEDIUM)).into(),
+            };
+            let (title, sub) = track.map_or((String::new(), String::new()), |t| (t.title.clone(), format!("{} · {}", t.artist, t.album)));
+            let playing = self.play_state == PlayState::Playing;
+            let bar = container(
+                row![
+                    art,
+                    column![
+                        canvas(Marquee { text: title, size: scale::TITLE_LARGE.0, line_height: scale::TITLE_LARGE.1, font: FONT, color: c.on_surface, phase: self.marquee_phase }).width(300).height(28),
+                        canvas(Marquee { text: sub, size: scale::BODY_LARGE.0, line_height: scale::BODY_LARGE.1, font: FONT, color: c.on_surface_variant, phase: self.marquee_phase }).width(300).height(24),
+                    ]
+                    .width(300),
+                    icon_button(if playing { "pause" } else { "play_arrow" }, 56.0, 30.0, c.on_primary, Some(c.primary), if playing { 18.0 } else { 28.0 }, Some(Message::PlayPause)),
+                    self.seek_column(track.is_some()),
+                ]
+                .spacing(24)
+                .align_y(Alignment::Center),
+            )
+            .padding(Padding { top: 12.0, right: 20.0, bottom: 12.0, left: 12.0 })
+            .style(glass(20.0));
+            layers = layers.push(container(opaque(bar)).width(Fill).height(Fill).align_y(Vertical::Bottom).padding(Padding { top: 0.0, right: 20.0, bottom: 16.0, left: 20.0 }));
+        }
+        if self.viz_menu.is_some() {
+            layers = layers.push(self.viz_menu());
+        }
+        layers.into()
+    }
+
+    /// The preset's name as a dropdown button: a shuffle mark while presets change by
+    /// themselves, a lock once one is chosen.
+    fn preset_chip(&self, height: f32, max_width: f32) -> Element<'_, Message> {
+        let c = self.colors;
+        let mark = if self.viz.locked { "lock" } else { "shuffle" };
+        let r = row![
+            icon(mark, 14.0, c.on_surface_variant),
+            label(fit(self.viz.preset_name(), max_width - 44.0, 12.0), scale::LABEL_MEDIUM, FONT_MEDIUM, c.on_surface),
+            icon("arrow_drop_down", 18.0, c.on_surface_variant),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center);
+        button(r)
+            .height(height)
+            .padding(Padding { top: 0.0, right: 4.0, bottom: 0.0, left: 10.0 })
+            .on_press(Message::VizMenu(true))
+            .style(move |_, status| state_button(Some(theme::alpha(c.surface_container_highest, 0.6)), c.on_surface, height / 2.0, status))
+            .into()
+    }
+
+    /// Every preset, with "Automatic" at the top to let them change by themselves again.
+    fn viz_menu(&self) -> Element<'_, Message> {
+        let Some(at) = self.viz_menu else { return space().into() };
+        let current = self.viz.index();
+        let mut items = vec![
+            self.menu_item("shuffle", "Automatic", Trailing::Check(!self.viz.locked), false, Message::VizPick(None)),
+            self.menu_divider(),
+        ];
+        for (i, preset) in viz::PRESETS.iter().enumerate() {
+            let glyph = if preset.fire > 0.0 {
+                "local_fire_department"
+            } else if preset.tunnel + preset.corridor > 0.0 {
+                "view_in_ar"
+            } else {
+                "auto_awesome"
+            };
+            let check = Trailing::Check(self.viz.locked && i == current);
+            items.push(self.menu_item(glyph, preset.name, check, i == current, Message::VizPick(Some(i))));
+        }
+        let width = 280.0;
+        let size = self.window_size;
+        let full = 8.0 + 9.0 + ITEM_H * (viz::PRESETS.len() + 1) as f32;
+        let height = full.min(520.0).min(size.height - 16.0);
+        let colors = self.colors;
+        let list = scrollable(column(items).padding([4.0, 0.0]))
+            .height(height)
+            .style(move |_, status| crate::ui::table::scroll_style(colors, status));
+        let menu = container(list).width(width).clip(true).style(floating(colors, shape::MEDIUM));
+        let x = (at.x - 24.0).clamp(8.0, (size.width - width - 8.0).max(8.0));
+        let y = if at.y + 16.0 + height <= size.height - 8.0 { at.y + 16.0 } else { (size.height - height - 8.0).max(8.0) };
+        stack![
+            mouse_area(container(space()).width(Fill).height(Fill)).on_press(Message::VizMenu(false)).on_right_press(Message::VizMenu(false)),
+            pin(menu).x(x).y(y),
+        ]
+        .into()
+    }
+
     // ---- settings ----
 
     fn settings_dialog<'a>(&'a self) -> Element<'a, Message> {
@@ -731,24 +912,7 @@ impl App {
             ("System", bar == TitleBar::System, Message::SetTitleBar(TitleBar::System)),
         ]);
 
-        let on = self.config.normalization;
-        let switch = button(
-            container(container(icon(if on { "check" } else { "" }, 16.0, c.primary)).center(if on { 24.0 } else { 16.0 }).style(surface(if on { c.on_primary } else { c.outline }, 12.0)))
-                .width(Fill)
-                .height(Fill)
-                .align_x(if on { Horizontal::Right } else { Horizontal::Left })
-                .align_y(Vertical::Center)
-                .padding([0.0, if on { 4.0 } else { 6.0 }]),
-        )
-        .width(52)
-        .height(32)
-        .padding(0)
-        .on_press(Message::ToggleNormalization)
-        .style(move |_, _| button::Style {
-            background: Some(Background::Color(if on { c.primary } else { c.surface_container_highest })),
-            border: Border { radius: 16.0.into(), width: 2.0, color: if on { c.primary } else { c.outline } },
-            ..button::Style::default()
-        });
+        let switch = toggle_switch(c, self.config.normalization, Message::ToggleNormalization);
 
         let folders: Element<'_, Message> = if self.folders.is_empty() {
             caption("No folders yet. Import one to build your library.").into()
@@ -808,7 +972,11 @@ impl App {
             line(text_pair("Title bar", "System uses your desktop's window decorations"), title_bar.into()),
             divider(),
             section("Playback"),
-            line(text_pair("Volume normalization", "Uses ReplayGain tags; measures untagged files in the background"), switch.into()),
+            line(text_pair("Volume normalization", "Uses ReplayGain tags; measures untagged files in the background"), switch),
+            line(
+                text_pair("Reduce flashing", "Limits how fast the visualizer can brighten or darken (recommended)"),
+                toggle_switch(c, self.config.reduce_flashing, Message::ToggleReduceFlashing),
+            ),
             divider(),
             section("Library"),
             folders,
@@ -840,6 +1008,28 @@ impl App {
         ]
         .into()
     }
+}
+
+/// M3 switch: a pill track with a handle that grows and gains a check when on.
+fn toggle_switch<'a>(c: Colors, on: bool, msg: Message) -> Element<'a, Message> {
+    button(
+        container(container(icon(if on { "check" } else { "" }, 16.0, c.primary)).center(if on { 24.0 } else { 16.0 }).style(surface(if on { c.on_primary } else { c.outline }, 12.0)))
+            .width(Fill)
+            .height(Fill)
+            .align_x(if on { Horizontal::Right } else { Horizontal::Left })
+            .align_y(Vertical::Center)
+            .padding([0.0, if on { 4.0 } else { 6.0 }]),
+    )
+    .width(52)
+    .height(32)
+    .padding(0)
+    .on_press(msg)
+    .style(move |_, _| button::Style {
+        background: Some(Background::Color(if on { c.primary } else { c.surface_container_highest })),
+        border: Border { radius: 16.0.into(), width: 2.0, color: if on { c.primary } else { c.outline } },
+        ..button::Style::default()
+    })
+    .into()
 }
 
 fn chip<'a>(c: Colors, glyph: &'a str, text: String, dismiss: Option<Message>) -> Element<'a, Message> {

@@ -1,4 +1,5 @@
-//! Desktop integration over D-Bus: MPRIS (SPEC 3.2, 4.6) and "Show in Folder" (SPEC 4.7).
+//! Desktop integration: MPRIS (SPEC 3.2, 4.6) and "Show in Folder" (SPEC 4.7) over D-Bus,
+//! and the desktop entry that gives the window its icon.
 //!
 //! The MPRIS server runs on its own thread with its own executor (zbus's `block_on`), so media
 //! keys and panel widgets can pause, stop and seek even while the UI thread is hung.
@@ -11,9 +12,11 @@ use vibrance_audio::Engine;
 
 mod control;
 mod folder;
+mod launcher;
 mod metadata;
 mod server;
 
+pub use launcher::{APP_ID, install_launcher};
 pub use metadata::{file_url, track_object_path};
 
 /// Bus name suffix: the server registers `org.mpris.MediaPlayer2.vibrance`.

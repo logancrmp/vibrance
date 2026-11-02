@@ -25,6 +25,28 @@ impl App {
             return Task::none();
         }
 
+        if self.viz_menu.is_some() && matches!(key.as_ref(), Key::Named(Named::Escape)) {
+            self.viz_menu = None;
+            return Task::none();
+        }
+        if matches!(key.as_ref(), Key::Named(Named::F11)) {
+            return self.dispatch(Message::VizFullscreen(!self.viz_fullscreen));
+        }
+        if self.viz_fullscreen {
+            // No panes are visible, so plain letters are free for visualizer controls (SPEC 4.6).
+            self.viz_ui_until = Instant::now() + Duration::from_millis(2500);
+            match key.as_ref() {
+                Key::Named(Named::Escape) => return self.dispatch(Message::VizFullscreen(false)),
+                Key::Named(Named::Space) => self.play_pause(),
+                Key::Named(Named::ArrowLeft) => self.seek_to(self.position.saturating_sub(Duration::from_secs(5))),
+                Key::Named(Named::ArrowRight) => self.seek_to(self.position + Duration::from_secs(5)),
+                Key::Character("n") if !ctrl => self.viz.next_preset(),
+                Key::Character("l") if !ctrl => self.viz.locked = !self.viz.locked,
+                _ => {}
+            }
+            return Task::none();
+        }
+
         let jump_active = self.jump_term(self.focus).is_some();
         match key.as_ref() {
             Key::Named(Named::Escape) => {
@@ -120,6 +142,9 @@ impl App {
 
     pub(super) fn cursor_moved(&mut self, p: Point) {
         self.cursor = p;
+        if self.viz_fullscreen {
+            self.viz_ui_until = Instant::now() + Duration::from_millis(2500);
+        }
         if let Some(press) = &self.press
             && self.drag.is_none()
             && press.origin.distance(p) > 5.0

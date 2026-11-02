@@ -226,7 +226,7 @@ fn root_interface_properties_and_methods() {
         "SupportedMimeTypes",
     ]);
     let lines: Vec<_> = props.lines().collect();
-    assert_eq!(lines, ["s \"Vibrance\"", "s \"vibrance\"", "b true", "b true", "b false", "as 0", "as 0"]);
+    assert_eq!(lines, ["s \"Vibrance\"", "s \"io.github.logancrmp.vibrance\"", "b true", "b true", "b false", "as 0", "as 0"]);
 
     s.busctl(&["call", "org.mpris.MediaPlayer2", "Raise"]);
     s.expect(&[Command::Raise]);

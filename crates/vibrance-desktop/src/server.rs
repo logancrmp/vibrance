@@ -84,7 +84,7 @@ impl<E: Transport> RootInterface for Player<E> {
     }
 
     async fn desktop_entry(&self) -> fdo::Result<String> {
-        Ok("vibrance".to_owned())
+        Ok(crate::APP_ID.to_owned())
     }
 
     async fn supported_uri_schemes(&self) -> fdo::Result<Vec<String>> {
