@@ -45,20 +45,24 @@ pub struct Queue {
 }
 
 impl Queue {
-    /// Play from the library: the queue becomes `ids` and the first one plays.
-    pub fn replace(&mut self, ids: Vec<TrackId>) -> Step {
+    /// Play from the library starting at `index`: the queue becomes `ids` and that item plays.
+    /// With shuffle on, it plays first and the rest are shuffled after it.
+    pub fn replace_at(&mut self, ids: Vec<TrackId>, index: usize) -> Step {
         if ids.is_empty() {
             return Step::Stop;
         }
+        let index = index.min(ids.len() - 1);
         if self.shuffle {
             self.original = Some(ids.clone());
             self.items = ids;
-            self.shuffle_from(0);
+            self.items.swap(0, index);
+            self.shuffle_from(1);
+            self.jump(0)
         } else {
             self.original = None;
             self.items = ids;
+            self.jump(index)
         }
-        self.jump(0)
     }
 
     pub fn jump(&mut self, index: usize) -> Step {
@@ -323,15 +327,32 @@ mod tests {
 
     fn q(ids: &[TrackId]) -> Queue {
         let mut q = Queue::default();
-        q.replace(ids.to_vec());
+        q.replace_at(ids.to_vec(), 0);
         q
     }
 
     #[test]
     fn replace_plays_first() {
         let mut q = Queue::default();
-        assert_eq!(q.replace(vec![1, 2, 3]), Step::Play(1));
+        assert_eq!(q.replace_at(vec![1, 2, 3], 0), Step::Play(1));
         assert_eq!(q.upcoming(), Some(2));
+    }
+
+    #[test]
+    fn replace_at_plays_clicked_position() {
+        let mut q = Queue::default();
+        assert_eq!(q.replace_at(vec![1, 2, 3, 4], 2), Step::Play(3));
+        assert_eq!(q.items, vec![1, 2, 3, 4]);
+        assert_eq!(q.current, Some(2));
+        assert_eq!(q.upcoming(), Some(4));
+        assert_eq!(q.prev(), Step::Play(2));
+
+        let mut q = Queue { shuffle: true, ..Queue::default() };
+        assert_eq!(q.replace_at((1..=10).collect(), 6), Step::Play(7));
+        assert_eq!(q.items[0], 7);
+        let mut rest = q.items.clone();
+        rest.sort();
+        assert_eq!(rest, (1..=10).collect::<Vec<_>>());
     }
 
     #[test]

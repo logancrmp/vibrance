@@ -289,6 +289,8 @@ pub struct App {
     header_press: Option<HeaderPress>,
     resize: Option<ColumnResize>,
     pub context: Option<ContextMenu>,
+    /// A row to bring into view once the current update is done.
+    pending_scroll: Option<(Pane, usize)>,
     pub menu: Menu,
     pub settings: bool,
     pub folders: Vec<PathBuf>,
@@ -433,6 +435,7 @@ impl App {
             header_press: None,
             resize: None,
             context: None,
+            pending_scroll: None,
             menu: Menu::Closed,
             settings: false,
             folders: Vec::new(),
@@ -513,7 +516,11 @@ impl App {
         self.adopt_engine(!matches!(message, Message::Frame(_) | Message::Cursor(_)));
         let task = self.dispatch(message);
         self.publish_mpris();
-        Task::batch([task, self.load_art()])
+        let scroll = match self.pending_scroll.take() {
+            Some((pane, row)) => self.scroll_into_view(pane, row, true),
+            None => Task::none(),
+        };
+        Task::batch([task, scroll, self.load_art()])
     }
 
     fn dispatch(&mut self, message: Message) -> Task<Message> {

@@ -191,7 +191,7 @@ Three panes: **Artists**, **Albums**, **Songs**. Selection filters downward.
 **All playback goes through the Queue pane.** Nothing plays from the library panes directly.
 
 **Playing from the library replaces the queue.** This covers double-click, Enter, and context-menu "Play":
-- On a song: clears the queue, adds that song and every song below it in the Songs pane (in display order), and plays the clicked song. Enter on a single selected song does the same.
+- On a song: clears the queue, adds every song in the Songs pane (in display order), and starts playing at the clicked song's position. Songs above it sit in the queue as already played, so Previous works. With shuffle on, the clicked song plays first and the rest are shuffled. Enter on a single selected song does the same.
 - On an album or artist: clears the queue, adds all its songs (in the order below), and plays the first one.
 - On a multi-selection: clears the queue, adds the songs of every selected item, and plays the first one.
 
@@ -747,4 +747,4 @@ _None currently._
 | 2026-11-01 | Album Art pane: dockable and headerless, under Queue by default. Chosen over a taller top bar. |
 | 2026-11-01 | Visualizer pane and full screen use a MilkDrop-style feedback engine of our own in wgpu (not projectM). The bar spectrum stays in the now-playing strip. |
 | 2026-11-01 | Launch target relaxed to ≤ 300 ms (GPU driver start-up dominates). Do not patch iced's GPU setup. Vibrance's own start-up work ≤ 20 ms. |
-| 2026-11-01 | Double-clicking a song queues it plus everything below it in the Songs pane. Long playing titles scroll instead of truncating. The Queue title drops its count. |
+| 2026-11-01 | Double-clicking a song queues the whole Songs pane and plays from the clicked song's position. Long playing titles scroll instead of truncating. The Queue title drops its count. |

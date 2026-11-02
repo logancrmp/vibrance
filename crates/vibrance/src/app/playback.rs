@@ -149,10 +149,18 @@ impl App {
     }
 
     pub(super) fn play_ids(&mut self, ids: Vec<TrackId>) {
-        let step = self.queue.replace(ids);
+        self.play_ids_at(ids, 0);
+    }
+
+    /// Replace the queue and play from `index`, bringing that row into view.
+    pub(super) fn play_ids_at(&mut self, ids: Vec<TrackId>, index: usize) {
+        let step = self.queue.replace_at(ids, index);
         self.sel_queue.clear();
         self.offsets[Pane::Queue.ix()] = 0.0;
         self.apply(step);
+        if let Some(current) = self.queue.current.filter(|&c| c > 0) {
+            self.pending_scroll = Some((Pane::Queue, current));
+        }
     }
 
     /// Keep the engine's gapless preload and the saved queue in step with the queue.

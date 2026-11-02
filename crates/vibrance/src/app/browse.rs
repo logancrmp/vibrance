@@ -119,12 +119,16 @@ impl App {
         }
     }
 
-    /// Double-click (SPEC 4.2). A song plays with everything below it in the Songs pane.
+    /// Double-click (SPEC 4.2). A song queues the whole Songs pane and plays from its position.
     pub(super) fn activate(&mut self, pane: Pane, row: usize) {
         let ids = match pane {
             Pane::Artists if row > 0 => self.artist_rows.get(row - 1).map(|&a| self.model.artist_track_ids(a)),
             Pane::Albums if row > 0 => self.album_rows.get(row - 1).map(|&a| self.model.album_track_ids(a)),
-            Pane::Songs => self.song_rows.get(row..).map(|rows| rows.iter().map(|&t| self.model.tracks[t].id).collect()),
+            Pane::Songs if row < self.song_rows.len() => {
+                let ids = self.song_rows.iter().map(|&t| self.model.tracks[t].id).collect();
+                self.play_ids_at(ids, row);
+                return;
+            }
             Pane::Queue => {
                 let step = self.queue.jump(row);
                 self.apply(step);
