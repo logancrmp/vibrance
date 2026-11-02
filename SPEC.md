@@ -103,7 +103,7 @@ Constraints:
 - **MPRIS:** Vibrance registers on D-Bus as an MPRIS media player (via `zbus`, no GTK).
   - Media keys, the desktop's media controls, and `playerctl` can pause or stop it.
   - The MPRIS handler runs off the UI thread, so these controls work even if the window hangs.
-- **Desktop entry and icon:** the window's app ID is `io.github.logancrmp.vibrance` (also MPRIS's `DesktopEntry`). On Wayland the taskbar finds the icon through a desktop entry of that name, so at startup Vibrance writes one (launching the running binary) and its icon to `~/.local/share/applications` and `~/.local/share/icons/hicolor/scalable/apps`, off the UI thread and only when they changed. Test runs (`VIBRANCE_HOME`, `--script`, `--screenshot`) skip this.
+- **Desktop entry and icon:** the window's app ID is `io.github.logancrmp.vibrance` (also MPRIS's `DesktopEntry`). On Wayland the taskbar finds the icon through a desktop entry of that name, so at startup Vibrance writes one (launching the running binary) and its icon to `~/.local/share/applications` and `~/.local/share/icons/hicolor/scalable/apps`, off the UI thread and only when they changed. The entry names the icon by full path: a desktop already running when it was installed can trust a stale icon-theme cache that doesn't list it, and show no icon at all. Test runs (`VIBRANCE_HOME`, `--script`, `--screenshot`) skip this.
 
 **Signal path:** decode → resample (`rubato`, only when needed) → normalization gain (if on) → visualizer tap → volume → output.
 
