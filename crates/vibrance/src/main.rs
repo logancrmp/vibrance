@@ -1,5 +1,7 @@
 mod app;
+mod columns;
 mod config;
+mod layout;
 mod model;
 mod persist;
 mod queue;
@@ -11,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use iced::{Size, Task, window};
+use iced::{Size, window};
 use vibrance_audio::Sink;
 
 use crate::app::{App, Options};
@@ -51,7 +53,7 @@ fn main() -> iced::Result {
     };
     let decorations = Config::load(&Paths::resolve()).title_bar == TitleBar::System;
 
-    let mut application = iced::application(move || App::new(options.clone()), App::update_and_art, App::view)
+    let mut application = iced::application(move || App::new(options.clone()), App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::iced_theme)
@@ -77,11 +79,6 @@ fn main() -> iced::Result {
 }
 
 impl App {
-    fn update_and_art(&mut self, message: app::Message) -> Task<app::Message> {
-        let task = self.update(message);
-        Task::batch([task, self.load_art()])
-    }
-
     fn iced_theme(&self) -> iced::Theme {
         iced::Theme::custom(
             "Vibrance",

@@ -12,3 +12,4 @@ image.workspace = true
 lofty = "0.25"
 rusqlite = { version = "0.41", features = ["bundled"] }
 walkdir = "2"
+notify = "8"

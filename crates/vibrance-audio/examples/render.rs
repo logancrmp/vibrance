@@ -18,7 +18,7 @@ fn main() -> ExitCode {
     let tracks: Vec<Track> = args[1..]
         .iter()
         .enumerate()
-        .map(|(i, path)| Track { id: i as u64, path: PathBuf::from(path) })
+        .map(|(i, path)| Track::new(i as u64, path))
         .collect();
 
     let engine = match Engine::new(Sink::Wav { path: out.clone(), realtime: false }) {

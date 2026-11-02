@@ -191,7 +191,7 @@ Three panes: **Artists**, **Albums**, **Songs**. Selection filters downward.
 **All playback goes through the Queue pane.** Nothing plays from the library panes directly.
 
 **Playing from the library replaces the queue.** This covers double-click, Enter, and context-menu "Play":
-- On a song: clears the queue, adds the song, and plays it.
+- On a song: clears the queue, adds that song and every song below it in the Songs pane (in display order), and plays the clicked song. Enter on a single selected song does the same.
 - On an album or artist: clears the queue, adds all its songs (in the order below), and plays the first one.
 - On a multi-selection: clears the queue, adds the songs of every selected item, and plays the first one.
 
@@ -238,7 +238,7 @@ Three panes: **Artists**, **Albums**, **Songs**. Selection filters downward.
 - Shuffle and repeat state persist across restarts.
 
 **Queue pane display:**
-- The header holds Shuffle, Repeat, and Clear.
+- The header holds Shuffle, Repeat, and Clear. The title is just "Queue"; the footer carries the count.
 - Columns: playing indicator, position, Title, Artist, Duration.
 - Columns resize but do not sort, because the queue order is the play order.
 - The footer shows the item count and total duration.
@@ -417,7 +417,7 @@ There are two visualizers:
 **Behavior:**
 - **Play Next** inserts the songs right after the current queue item. **Add to Queue** appends them. Neither replaces the queue.
 - **Go to Artist / Go to Album** selects that item in its pane, which cascades the filter, and scrolls it into view.
-- **Show in Folder** opens the containing folder in the system file manager (xdg-desktop-portal OpenURI).
+- **Show in Folder** reveals the file in the system file manager (FileManager1.ShowItems over D-Bus, falling back to `xdg-open` on the folder).
 - Menus act on the whole selection when the clicked row is part of it. Otherwise they act on the clicked row alone.
 
 ### 4.8 Album Art pane
@@ -425,9 +425,9 @@ There are two visualizers:
 - **What it is:** a dockable pane (6.2) showing the current track's art.
 - **Sizing:** the art is the largest square that fits inside the pane's 12 px padding. It is centered, with Medium (12 px) corners.
 - **Default:** shown, under Queue in the right column (5.2). It is hidden and shown from the Layout menu.
-- **No header,** so the art gets all the space.
-  - On hover, a small "Album Art" drag handle appears in the top-left corner.
-  - Dragging the handle moves the pane, like a pane header elsewhere.
+- **Nearly headerless,** so the art gets almost all the space.
+  - A slim 28 px strip at the top shows a drag handle and "Album Art" only on hover.
+  - Dragging the strip moves the pane, like a pane header elsewhere.
 - **Art cache:**
   - Art is decoded off the UI thread at the pane's pixel size (up to 2048 px).
   - It is cached in `$XDG_CACHE_HOME/vibrance/art/`, alongside the thumbnails.
@@ -517,6 +517,8 @@ Vibrance follows **Material 3** (https://m3.material.io/). Where this section is
 - Panes are rounded containers using the Large shape (16 px).
 - Selected and hovered rows use the Small shape (8 px), inset 4 px horizontally.
 - Menus, dialogs, tooltips, and sliders use their M3 component defaults.
+
+**Long titles:** when the now-playing title or artist line, or the playing queue row's title, doesn't fit, it scrolls slowly back and forth (about 28 px/s, pausing ~1.8 s at each end) while playing. Other cells are cut with an ellipsis.
 
 **Elevation:** tonal surfaces only. Shadows appear only on floating elements: menus, dialogs, and a pane being dragged.
 
@@ -745,3 +747,4 @@ _None currently._
 | 2026-11-01 | Album Art pane: dockable and headerless, under Queue by default. Chosen over a taller top bar. |
 | 2026-11-01 | Visualizer pane and full screen use a MilkDrop-style feedback engine of our own in wgpu (not projectM). The bar spectrum stays in the now-playing strip. |
 | 2026-11-01 | Launch target relaxed to ≤ 300 ms (GPU driver start-up dominates). Do not patch iced's GPU setup. Vibrance's own start-up work ≤ 20 ms. |
+| 2026-11-01 | Double-clicking a song queues it plus everything below it in the Songs pane. Long playing titles scroll instead of truncating. The Queue title drops its count. |

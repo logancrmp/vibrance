@@ -447,6 +447,10 @@ fn read_job(job: Job, roots: &[Root]) -> Parsed {
             sample_rate: info.sample_rate,
             mtime: job.mtime,
             size: job.size,
+            // Filled in from the database when the track is written.
+            added: 0,
+            gain_db: info.gain_db,
+            peak: info.peak,
         },
     }
 }
@@ -526,9 +530,8 @@ fn write_batch(
             existing,
         } in batch.drain(..)
         {
-            match db::upsert_track(&mut stmt, &track, folder_id, now) {
-                Ok(id) => {
-                    track.id = id;
+            match db::upsert_track(&mut stmt, &mut track, folder_id, now) {
+                Ok(()) => {
                     if existing {
                         stats.updated += 1;
                     } else {

@@ -11,20 +11,25 @@ use std::sync::Arc;
 use rtrb::{Consumer, Producer};
 
 use crate::PlayState;
+use crate::TrackId;
 use crate::shared::{
-    Announce, CoreStatus, Flush, Marker, MarkerKind, Notice, NoticeKind, SegInfo, Shared,
+    Announce, CoreStatus, Flush, GainUpdate, Marker, MarkerKind, Notice, NoticeKind, SegInfo,
+    Shared,
 };
 use crate::tap::TapBuffer;
 
 /// Fade length for pause, resume, stop, and around the cut on play and seek.
 const FADE_MS: u32 = 4;
-/// Volume changes glide over this long.
+/// Volume and normalization gain changes glide over this long.
 const VOLUME_GLIDE_MS: u32 = 10;
+/// Gain updates remembered for segments not reached yet.
+const GAIN_SLOTS: usize = 8;
 
 pub(crate) struct Core {
     samples: Consumer<f32>,
     markers: Consumer<Marker>,
     notices: Producer<Notice>,
+    gain_updates: Consumer<GainUpdate>,
     shared: Arc<Shared>,
     tap: Arc<TapBuffer>,
     rate: u64,
@@ -39,6 +44,11 @@ pub(crate) struct Core {
     /// The pending flush waits for `read` to reach its cut point instead of fading out.
     pending_cut: bool,
     transport: Fade,
+    /// The current segment's normalization gain.
+    norm: Glide,
+    /// Latest gain per track for this generation, newest last, so a segment that starts later
+    /// uses the gain set after its marker was queued.
+    gains: [Option<GainUpdate>; GAIN_SLOTS],
     volume: Glide,
     tap_pos: u64,
     fade: u32,
@@ -55,6 +65,8 @@ pub(crate) struct Core {
 #[derive(Clone, Copy)]
 struct Seg {
     info: SegInfo,
+    /// Ring index of the segment's first frame.
+    start: u64,
     consumed: u64,
     announced: bool,
 }
@@ -64,6 +76,7 @@ impl Core {
         samples: Consumer<f32>,
         markers: Consumer<Marker>,
         notices: Producer<Notice>,
+        gain_updates: Consumer<GainUpdate>,
         shared: Arc<Shared>,
         tap: Arc<TapBuffer>,
     ) -> Self {
@@ -72,6 +85,7 @@ impl Core {
             samples,
             markers,
             notices,
+            gain_updates,
             rate: u64::from(shared.rate.max(1)),
             fade: ms(FADE_MS),
             volume_glide: ms(VOLUME_GLIDE_MS),
@@ -86,6 +100,8 @@ impl Core {
             pending_flush: None,
             pending_cut: false,
             transport: Fade::default(),
+            norm: Glide::new(1.0),
+            gains: [None; GAIN_SLOTS],
             tap_pos: 0,
             cb_due_ns: 0,
             cb_offset: 0,
@@ -183,7 +199,46 @@ impl Core {
         if gain != self.volume.target {
             self.volume.retarget(gain, self.volume_glide);
         }
+        // Before the flush, so a segment it starts already sees the newest gains.
+        self.take_gain_updates();
         self.poll_flush();
+    }
+
+    fn take_gain_updates(&mut self) {
+        while let Ok(update) = self.gain_updates.pop() {
+            if update.generation < self.generation {
+                continue;
+            }
+            // Replace the entry this one supersedes, or the oldest.
+            let same = |g: GainUpdate| g.track == update.track && g.from == update.from;
+            let slot = self
+                .gains
+                .iter()
+                .position(|g| g.is_some_and(same))
+                .or_else(|| self.gains.iter().position(Option::is_none))
+                .unwrap_or(0);
+            if slot + 1 < GAIN_SLOTS {
+                self.gains[slot..].rotate_left(1);
+            }
+            self.gains[GAIN_SLOTS - 1] = Some(update);
+            let applies = self.seg.is_some_and(|s| {
+                s.info.track == Some(update.track) && s.start >= update.from
+            });
+            if update.generation == self.generation && applies {
+                self.norm.retarget(update.gain, self.volume_glide);
+            }
+        }
+    }
+
+    /// The gain a segment of `track` starting at ring index `start` begins with: the newest
+    /// update covering it, else the gain it was queued with.
+    fn start_gain(&self, track: Option<TrackId>, start: u64, queued: f32) -> f32 {
+        self.gains
+            .iter()
+            .rev()
+            .flatten()
+            .find(|g| g.generation == self.generation && Some(g.track) == track && start >= g.from)
+            .map_or(queued, |g| g.gain)
     }
 
     fn finish(&mut self) {
@@ -273,7 +328,7 @@ impl Core {
         let (a, b) = chunk.as_slices();
         let src = a.as_chunks::<2>().0.iter().chain(b.as_chunks::<2>().0);
         for (dst, src) in out.as_chunks_mut::<2>().0.iter_mut().zip(src) {
-            let g = self.transport.next();
+            let g = self.transport.next() * self.norm.next();
             let l = finite(src[0]) * g;
             let r = finite(src[1]) * g;
             self.tap.store(self.tap_pos, (l + r) * 0.5);
@@ -345,8 +400,15 @@ impl Core {
         self.read = self.read.max(flush.start);
         self.discard_skipped();
         self.generation = flush.generation;
+        for slot in &mut self.gains {
+            if slot.is_some_and(|g| g.generation < flush.generation) {
+                *slot = None;
+            }
+        }
+        self.norm = Glide::new(self.start_gain(flush.seg.track, flush.start, flush.seg.gain));
         self.seg = flush.seg.track.map(|_| Seg {
             info: flush.seg,
+            start: flush.start,
             consumed: 0,
             announced: flush.seg.announce == Announce::Nothing,
         });
@@ -399,7 +461,9 @@ impl Core {
             let _ = self.markers.pop();
             match m.kind {
                 MarkerKind::Join { seg } => {
-                    self.seg = Some(Seg { info: seg, consumed: 0, announced: false });
+                    // Each track's gain applies from its first frame, without a glide.
+                    self.norm = Glide::new(self.start_gain(seg.track, m.start, seg.gain));
+                    self.seg = Some(Seg { info: seg, start: m.start, consumed: 0, announced: false });
                 }
                 MarkerKind::End => {
                     self.ended = true;

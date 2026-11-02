@@ -3,13 +3,14 @@
 //! Audio is decoded and played inside this process (SPEC 3.2). The UI owns the
 //! queue; it tells the engine what to play now and what to join gaplessly next.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 mod analyzer;
 mod decode;
 mod engine;
+mod loudness;
 mod mp4;
 mod output;
 mod player;
@@ -43,6 +44,16 @@ pub type TrackId = u64;
 pub struct Track {
     pub id: TrackId,
     pub path: PathBuf,
+    /// Normalization gain in dB applied to this track (0.0: none), from its first sample.
+    /// Applied after resampling and before the visualizer tap and the volume.
+    pub gain_db: f32,
+}
+
+impl Track {
+    /// A track played without normalization gain.
+    pub fn new(id: TrackId, path: impl Into<PathBuf>) -> Track {
+        Track { id, path: path.into(), gain_db: 0.0 }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +101,29 @@ pub enum Error {
     Output(String),
     #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),
+    /// The file is not audio Vibrance can decode, or is damaged beyond use.
+    #[error("cannot decode: {0}")]
+    Decode(String),
+}
+
+/// Loudness of a whole file (EBU R128 / ITU BS.1770).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Loudness {
+    /// Integrated loudness in LUFS. `f32::NEG_INFINITY` when the file is silent or holds no
+    /// audio at all (nothing above the -70 LUFS gate): no gain should be derived from it.
+    pub integrated_lufs: f32,
+    /// Highest true peak over all channels, linear (1.0 = full scale).
+    pub true_peak: f32,
+}
+
+/// Measures a file's integrated loudness and true peak at its own sample rate and channel
+/// layout (LFE excluded), decoding it fully. This is slow work (a full decode plus 4x
+/// oversampling for the peak), meant for a background thread; it never panics.
+///
+/// Errors: `Error::Io` if the file cannot be opened, `Error::Decode` if it is not decodable
+/// audio. Silence and empty files are not errors; see `Loudness::integrated_lufs`.
+pub fn measure_loudness(path: &Path) -> Result<Loudness, Error> {
+    loudness::measure(path)
 }
 
 /// Handle to the playback engine. Cheap to call from the UI thread; no method blocks.
@@ -147,6 +181,13 @@ impl Engine {
 
     pub fn set_muted(&self, muted: bool) {
         self.inner.set_muted(muted);
+    }
+
+    /// Changes the normalization gain of track `id` if it is playing or queued next. A playing
+    /// track glides to the new gain over about 10 ms; a queued one starts with it. Later
+    /// `play` or `set_next` calls use the gain in the `Track` they are given.
+    pub fn set_gain(&self, id: TrackId, gain_db: f32) {
+        self.inner.send(Command::SetGain(id, gain_db));
     }
 
     pub fn status(&self) -> Status {

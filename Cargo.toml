@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/vibrance", "crates/vibrance-audio", "crates/vibrance-library"]
+members = ["crates/vibrance", "crates/vibrance-audio", "crates/vibrance-library", "crates/vibrance-desktop"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,8 @@ license = "MIT"
 [workspace.dependencies]
 vibrance-audio = { path = "crates/vibrance-audio" }
 vibrance-library = { path = "crates/vibrance-library" }
+vibrance-desktop = { path = "crates/vibrance-desktop" }
+async-channel = "2"
 log = "0.4"
 thiserror = "2"
 crossbeam-channel = "0.5"

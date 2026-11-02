@@ -1,7 +1,9 @@
 //! Widgets and style helpers that turn M3 roles into iced styles.
 
+pub mod marquee;
 pub mod seek;
 pub mod spectrum;
+pub mod swatch;
 pub mod table;
 pub mod volume;
 

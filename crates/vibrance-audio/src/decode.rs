@@ -194,15 +194,40 @@ impl Source {
     /// Appends the next decoded frames (interleaved stereo) to `out`. Returns `Ok(false)` at the
     /// end of the track.
     pub fn read(&mut self, out: &mut Vec<f32>) -> Result<bool, String> {
+        match self.next_frames()? {
+            Some(range) => {
+                let channels = self.downmix.channels.max(1);
+                let src = &self.interleaved[range.start * channels..range.end * channels];
+                self.downmix.apply(src, out);
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// The next decoded frames in the file's own channel layout. Returns `Ok(None)` at the end
+    /// of the track.
+    pub fn read_native(&mut self) -> Result<Option<Native<'_>>, String> {
+        let Some(range) = self.next_frames()? else {
+            return Ok(None);
+        };
+        let channels = self.downmix.channels.max(1);
+        let samples = &self.interleaved[range.start * channels..range.end * channels];
+        Ok(Some(Native { layout: self.downmix.layout.as_ref(), samples }))
+    }
+
+    /// Decodes until a packet yields presentation frames; returns their range (in frames) in
+    /// `self.interleaved`.
+    fn next_frames(&mut self) -> Result<Option<std::ops::Range<usize>>, String> {
         loop {
             if self.end.is_some_and(|end| self.next_frame.is_some_and(|n| n >= end as i64)) {
-                return Ok(false);
+                return Ok(None);
             }
             let packet = match self.format.next_packet() {
                 Ok(Some(packet)) => packet,
-                Ok(None) | Err(SymError::ResetRequired) => return self.finish(),
+                Ok(None) | Err(SymError::ResetRequired) => return self.finish().map(|_| None),
                 Err(SymError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    return self.finish();
+                    return self.finish().map(|_| None);
                 }
                 Err(e) => return Err(format!("read error: {e}")),
             };
@@ -220,19 +245,17 @@ impl Source {
                 }
                 Err(Bad::Fatal(e)) => return Err(e),
             }
-            let before = out.len();
-            self.emit(&packet, out);
-            if out.len() > before {
-                return Ok(true);
+            if let Some(range) = self.keep(&packet) {
+                return Ok(Some(range));
             }
         }
     }
 
-    fn finish(&self) -> Result<bool, String> {
+    fn finish(&self) -> Result<(), String> {
         if self.produced == 0 && self.bad_packets > 0 {
             return Err("no decodable audio".into());
         }
-        Ok(false)
+        Ok(())
     }
 
     /// Decodes `packet` into `self.interleaved` (in the source's channel layout).
@@ -268,8 +291,8 @@ impl Source {
         }
     }
 
-    /// Trims the decoded packet to its presentation frames and appends them, downmixed.
-    fn emit(&mut self, packet: &Packet, out: &mut Vec<f32>) {
+    /// Trims the decoded packet to its presentation frames; returns their range, if any.
+    fn keep(&mut self, packet: &Packet) -> Option<std::ops::Range<usize>> {
         let channels = self.downmix.channels.max(1);
         let decoded = self.interleaved.len() / channels;
         let (trim_start, trim_end) = (packet.trim_start.get(), packet.trim_end.get());
@@ -301,13 +324,12 @@ impl Source {
         let a = first.max(keep_from).min(first + count);
         let b = (first + count).min(keep_to).max(a);
         if b <= a {
-            return;
+            return None;
         }
         let lo = lo + (a - first) as usize;
         let hi = lo + (b - a) as usize;
-        let src = &self.interleaved[lo * channels..hi * channels];
-        self.downmix.apply(src, out);
         self.produced += (hi - lo) as u64;
+        Some(lo..hi)
     }
 
     fn ts_to_frames(&self, ts: i64) -> i64 {
@@ -320,6 +342,14 @@ impl Source {
             None => ts,
         }
     }
+}
+
+/// Decoded frames before downmixing.
+pub(crate) struct Native<'a> {
+    /// The layout, if the file declares one.
+    pub layout: Option<&'a Channels>,
+    /// Interleaved samples.
+    pub samples: &'a [f32],
 }
 
 enum Bad {

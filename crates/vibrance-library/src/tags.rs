@@ -46,6 +46,9 @@ pub(crate) struct TrackInfo {
     pub format: String,
     pub bitrate_kbps: Option<u32>,
     pub sample_rate: Option<u32>,
+    /// ReplayGain 2.0 track gain (dB toward -18 LUFS) and linear peak, from tags.
+    pub gain_db: Option<f32>,
+    pub peak: Option<f32>,
 }
 
 pub(crate) fn read(path: &Path) -> TrackInfo {
@@ -94,6 +97,18 @@ fn from_file(path: &Path, file: &TaggedFile, codec: Option<Mp4Codec>) -> TrackIn
     };
 
     let artist = text(ItemKey::TrackArtist).unwrap_or_else(|| UNKNOWN_ARTIST.to_owned());
+    let lookup = |key: ItemKey, parse: fn(&str) -> Option<f32>| {
+        tags.iter().find_map(|t| t.get_string(key).and_then(parse))
+    };
+    let replaygain = lookup(ItemKey::ReplayGainTrackGain, parse_gain);
+    let r128 = lookup(ItemKey::R128TrackGain, parse_r128);
+    // Opus files should carry R128 gain (RFC 7845); elsewhere ReplayGain is the norm.
+    let gain_db = if file.file_type() == FileType::Opus {
+        r128.or(replaygain)
+    } else {
+        replaygain.or(r128)
+    };
+    let peak = lookup(ItemKey::ReplayGainTrackPeak, parse_peak);
     let props = file.properties();
     let nonzero = |v: Option<u32>| v.filter(|&v| v > 0);
     TrackInfo {
@@ -123,6 +138,8 @@ fn from_file(path: &Path, file: &TaggedFile, codec: Option<Mp4Codec>) -> TrackIn
         format: format_name(file.file_type(), codec).to_owned(),
         bitrate_kbps: nonzero(props.audio_bitrate()).or(nonzero(props.overall_bitrate())),
         sample_rate: nonzero(props.sample_rate()),
+        gain_db,
+        peak: gain_db.and(peak),
     }
 }
 
@@ -140,6 +157,8 @@ fn fallback(path: &Path) -> TrackInfo {
         format: format_from_extension(path).to_owned(),
         bitrate_kbps: None,
         sample_rate: None,
+        gain_db: None,
+        peak: None,
     }
 }
 
@@ -234,6 +253,29 @@ fn parse_number(s: &str) -> Option<u32> {
     s[..end].parse().ok().filter(|&n| n > 0)
 }
 
+/// Gain in dB from "-6.54 dB", "+3.2 dB" or "-6.54".
+fn parse_gain(s: &str) -> Option<f32> {
+    parse_decimal(s.trim().trim_end_matches(|c: char| c.is_ascii_alphabetic()))
+        .filter(|g| g.abs() <= 64.0)
+}
+
+/// Linear peak, e.g. "0.988547".
+fn parse_peak(s: &str) -> Option<f32> {
+    parse_decimal(s).filter(|&p| (0.0..=100.0).contains(&p))
+}
+
+/// R128_TRACK_GAIN: a Q7.8 integer relative to -23 LUFS, converted to the -18 LUFS reference.
+fn parse_r128(s: &str) -> Option<f32> {
+    let q78: i16 = s.trim().parse().ok()?;
+    Some(f32::from(q78) / 256.0 + 5.0)
+}
+
+fn parse_decimal(s: &str) -> Option<f32> {
+    // Some taggers write a locale decimal comma.
+    let value: f32 = s.trim().replace(',', ".").parse().ok()?;
+    value.is_finite().then_some(value)
+}
+
 /// Year from "2021", "2021-04-02", "2021-04-02T10:00:00" or "02.04.2021".
 fn parse_year(s: &str) -> Option<i32> {
     s.split(|c: char| !c.is_ascii_digit())
@@ -265,6 +307,23 @@ mod tests {
         assert_eq!(parse_year("20210402"), Some(2021));
         assert_eq!(parse_year("'99"), None);
         assert_eq!(parse_year(""), None);
+    }
+
+    #[test]
+    fn gains() {
+        assert_eq!(parse_gain("-6.54 dB"), Some(-6.54));
+        assert_eq!(parse_gain("+3.20 dB"), Some(3.2));
+        assert_eq!(parse_gain(" -6.54db "), Some(-6.54));
+        assert_eq!(parse_gain("-6,54 dB"), Some(-6.54));
+        assert_eq!(parse_gain("2"), Some(2.0));
+        assert_eq!(parse_gain("loud"), None);
+        assert_eq!(parse_gain("NaN dB"), None);
+        assert_eq!(parse_peak("0.988547"), Some(0.988547));
+        assert_eq!(parse_peak("-1"), None);
+        assert_eq!(parse_r128("-1234"), Some(-1234.0 / 256.0 + 5.0));
+        assert_eq!(parse_r128("0"), Some(5.0));
+        assert_eq!(parse_r128("-6.5"), None);
+        assert_eq!(parse_r128("99999"), None);
     }
 
     #[test]

@@ -7,6 +7,8 @@ license.workspace = true
 [dependencies]
 vibrance-audio.workspace = true
 vibrance-library.workspace = true
+vibrance-desktop.workspace = true
+async-channel.workspace = true
 log.workspace = true
 crossbeam-channel.workspace = true
 image.workspace = true

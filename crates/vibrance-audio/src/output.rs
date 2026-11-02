@@ -11,7 +11,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use crate::Error;
 use crate::player::OutputControl;
 use crate::render::Core;
-use crate::shared::{Marker, Notice, Shared};
+use crate::shared::{GainUpdate, Marker, Notice, Shared};
 use crate::tap::TapBuffer;
 use crate::wav::WavWriter;
 
@@ -19,6 +19,7 @@ use crate::wav::WavWriter;
 const RING_SECONDS_DIV: u32 = 2;
 const MARKER_CAPACITY: usize = 256;
 const NOTICE_CAPACITY: usize = 256;
+const GAIN_CAPACITY: usize = 64;
 /// Output rate for the file and null sinks.
 pub(crate) const FILE_RATE: u32 = 48_000;
 
@@ -29,6 +30,7 @@ pub(crate) struct DecodeSide {
     pub samples: Producer<f32>,
     pub markers: Producer<Marker>,
     pub notices: Consumer<Notice>,
+    pub gain_updates: Producer<GainUpdate>,
 }
 
 /// A running output and how to stop it.
@@ -45,8 +47,16 @@ fn pipeline(rate: u32, realtime: bool) -> (Core, DecodeSide) {
     let (samples, sample_reader) = RingBuffer::new(ring_frames * 2);
     let (markers, marker_reader) = RingBuffer::new(MARKER_CAPACITY);
     let (notice_writer, notices) = RingBuffer::new(NOTICE_CAPACITY);
-    let core = Core::new(sample_reader, marker_reader, notice_writer, shared.clone(), tap.clone());
-    (core, DecodeSide { shared, tap, samples, markers, notices })
+    let (gain_updates, gain_reader) = RingBuffer::new(GAIN_CAPACITY);
+    let core = Core::new(
+        sample_reader,
+        marker_reader,
+        notice_writer,
+        gain_reader,
+        shared.clone(),
+        tap.clone(),
+    );
+    (core, DecodeSide { shared, tap, samples, markers, notices, gain_updates })
 }
 
 /// Starts rendering into a WAV file (or discarding, with no writer) on a thread of its own.

@@ -1,0 +1,12 @@
+[package]
+name = "vibrance-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vibrance-audio.workspace = true
+log.workspace = true
+thiserror.workspace = true
+async-channel.workspace = true
+mpris-server = "0.11"

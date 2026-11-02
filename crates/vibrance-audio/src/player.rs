@@ -11,8 +11,10 @@ use rtrb::{Consumer, Producer};
 
 use crate::decode::Source;
 use crate::resample::Resample;
+use crate::output::DecodeSide;
 use crate::shared::{
-    Announce, CoreStatus, Flush, Marker, MarkerKind, Notice, NoticeKind, SegInfo, Shared,
+    Announce, CoreStatus, Flush, GainUpdate, Marker, MarkerKind, Notice, NoticeKind, SegInfo,
+    Shared, db_to_gain,
 };
 use crate::{Event, PlayState, Track, TrackId};
 
@@ -23,6 +25,7 @@ pub(crate) enum Command {
     Resume,
     Stop,
     Seek(Duration),
+    SetGain(TrackId, f32),
     Shutdown,
 }
 
@@ -48,6 +51,9 @@ pub(crate) struct Player {
     shared: Arc<Shared>,
     writer: Writer,
     notices: Consumer<Notice>,
+    gain_updates: Producer<GainUpdate>,
+    /// Gain updates waiting for room in their ring.
+    pending_gains: VecDeque<GainUpdate>,
     output: Option<Sender<OutputControl>>,
     rate: u32,
     generation: u64,
@@ -91,19 +97,18 @@ impl Player {
     pub fn new(
         commands: Receiver<Command>,
         events: Sender<Event>,
-        shared: Arc<Shared>,
-        samples: Producer<f32>,
-        markers: Producer<Marker>,
-        notices: Consumer<Notice>,
+        side: DecodeSide,
         output: Option<Sender<OutputControl>>,
     ) -> Self {
-        let rate = shared.rate;
+        let rate = side.shared.rate;
         Player {
             commands,
             events,
-            shared,
-            writer: Writer::new(samples, markers),
-            notices,
+            shared: side.shared,
+            writer: Writer::new(side.samples, side.markers),
+            notices: side.notices,
+            gain_updates: side.gain_updates,
+            pending_gains: VecDeque::new(),
             output,
             rate,
             generation: 0,
@@ -145,6 +150,7 @@ impl Player {
             {
                 return;
             }
+            self.push_gains();
             self.drain_notices();
             self.send_due_events();
             self.produce();
@@ -164,7 +170,8 @@ impl Player {
         }
         // Until the output picks up a flush, the ring is full of stale audio; check back soon
         // to refill it (a suspended device stream only picks it up once resumed).
-        if self.core_status().generation < self.generation && !self.suspended {
+        let behind = self.core_status().generation < self.generation;
+        if (behind || !self.pending_gains.is_empty()) && !self.suspended {
             shorten(POLL_FAST);
         }
         if self.state == PlayState::Playing {
@@ -204,6 +211,14 @@ impl Player {
                     Some((_, start)) => *start = pos,
                     None => seek = Some(pos),
                 },
+                Command::SetGain(id, db) => {
+                    if let Some((track, _)) = &mut play
+                        && track.id == id
+                    {
+                        track.gain_db = db;
+                    }
+                    self.set_gain(id, db);
+                }
                 Command::SetNext(next) => {
                     if let Some(pos) = seek.take() {
                         self.seek(pos);
@@ -280,17 +295,56 @@ impl Player {
         }
     }
 
+    /// Changes a track's normalization gain wherever it is queued. If it is playing, the output
+    /// glides to the new gain; if it is queued, it starts with it.
+    fn set_gain(&mut self, id: TrackId, db: f32) {
+        if let Some(p) = self.next.as_mut().filter(|p| p.track.id == id) {
+            p.track.gain_db = db;
+        }
+        self.set_chain_gain(id, db, 0);
+    }
+
+    /// Sets the gain of `id`'s chain entries that start at ring index `from` or later.
+    fn set_chain_gain(&mut self, id: TrackId, db: f32, from: u64) {
+        let mut queued = false;
+        for entry in self.chain.iter_mut().filter(|e| e.track.id == id && e.start >= from) {
+            entry.track.gain_db = db;
+            queued = true;
+        }
+        if queued {
+            let gain = db_to_gain(db);
+            let update = GainUpdate { generation: self.generation, track: id, from, gain };
+            self.pending_gains.push_back(update);
+            self.push_gains();
+        }
+    }
+
+    fn push_gains(&mut self) {
+        while let Some(&update) = self.pending_gains.front() {
+            if self.gain_updates.push(update).is_err() {
+                break;
+            }
+            self.pending_gains.pop_front();
+        }
+    }
+
     fn set_next(&mut self, next: Option<Track>, may_rejoin: bool) {
-        if let (Some(n), Some(p)) = (&next, &self.next)
+        if let (Some(n), Some(p)) = (&next, &mut self.next)
             && same_track(n, &p.track)
         {
+            p.track.gain_db = n.gain_db;
             return;
         }
         if may_rejoin && let Some(i) = self.audible_index() {
             let joined = self.chain.get(i + 1).map(|e| (e.track.clone(), e.start));
             match (joined, &next) {
-                // Already joined the requested track.
-                (Some((t, _)), Some(n)) if same_track(&t, n) => return,
+                // Already joined the requested track; only its gain may have changed.
+                (Some((t, at)), Some(n)) if same_track(&t, n) => {
+                    if n.gain_db != t.gain_db {
+                        self.set_chain_gain(n.id, n.gain_db, at);
+                    }
+                    return;
+                }
                 // The decoder joined a different track that is not audible yet: undo that.
                 (Some((_, at)), _) => {
                     let preload = next.and_then(|t| self.preload(t));
@@ -332,6 +386,7 @@ impl Player {
         let from = current.track.id;
         let end_pos = current.pos0 + at.saturating_sub(current.start);
         let duration = current.duration;
+        let gain = db_to_gain(current.track.gain_db);
         let start = self.writer.produced;
         self.generation += 1;
         self.eos = None;
@@ -342,6 +397,7 @@ impl Player {
                     pos0: 0,
                     duration: p.source.duration(),
                     announce: Announce::Advanced { from },
+                    gain: db_to_gain(p.track.gain_db),
                 };
                 self.publish_flush(at, start, seg);
                 self.begin_session(p.source.rate());
@@ -353,6 +409,7 @@ impl Player {
                     pos0: end_pos,
                     duration,
                     announce: Announce::Nothing,
+                    gain,
                 };
                 self.publish_flush(at, start, seg);
                 self.push_end(start);
@@ -390,7 +447,13 @@ impl Player {
 
     fn begin(&mut self, track: Track, source: Source, pos: Duration, announce: Announce) {
         let pos0 = self.shared.duration_to_frames(pos);
-        let seg = SegInfo { track: Some(track.id), pos0, duration: source.duration(), announce };
+        let seg = SegInfo {
+            track: Some(track.id),
+            pos0,
+            duration: source.duration(),
+            announce,
+            gain: db_to_gain(track.gain_db),
+        };
         self.flush(seg);
         let start = self.writer.produced;
         self.begin_session(source.rate());
@@ -400,7 +463,13 @@ impl Player {
     /// Stops playback with nothing loaded.
     fn halt(&mut self) {
         self.set_state(PlayState::Stopped);
-        self.flush(SegInfo { track: None, pos0: 0, duration: None, announce: Announce::Nothing });
+        self.flush(SegInfo {
+            track: None,
+            pos0: 0,
+            duration: None,
+            announce: Announce::Nothing,
+            gain: 1.0,
+        });
         self.chain.clear();
     }
 
@@ -566,6 +635,7 @@ impl Player {
             pos0: 0,
             duration: next.source.duration(),
             announce: Announce::Advanced { from },
+            gain: db_to_gain(next.track.gain_db),
         };
         let join = Marker { generation: self.generation, start, kind: MarkerKind::Join { seg } };
         self.chain.push(Entry::new(next.track, start, 0, next.source, Some(join)));

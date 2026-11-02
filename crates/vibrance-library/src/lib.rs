@@ -10,8 +10,10 @@ mod art;
 mod db;
 mod scan;
 mod tags;
+mod watch;
 
 pub use tags::{SUPPORTED_EXTENSIONS, UNKNOWN_ALBUM, UNKNOWN_ARTIST, is_supported};
+pub use watch::{WatchEvent, Watcher, watch};
 
 pub type TrackId = i64;
 
@@ -39,6 +41,13 @@ pub struct Track {
     pub mtime: i64,
     /// File size in bytes.
     pub size: u64,
+    /// When the track first entered the library, in Unix seconds.
+    pub added: i64,
+    /// Track gain in dB toward the ReplayGain 2.0 reference (-18 LUFS), from tags or measured
+    /// with [`Library::set_measured_gain`].
+    pub gain_db: Option<f32>,
+    /// Track peak as a linear sample value (1.0 = full scale).
+    pub peak: Option<f32>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -101,6 +110,18 @@ impl Library {
 
     pub fn set_state(&self, key: &str, value: &str) -> Result<()> {
         db::set_state(&self.conn(), key, value)
+    }
+
+    /// Stores gain measured by the loudness worker for a track without gain tags. Ignored if the
+    /// track now has gain tags or no longer exists. A rescan keeps measured gain unless it finds
+    /// gain tags, which replace it. Non-finite values are rejected.
+    pub fn set_measured_gain(&self, id: TrackId, gain_db: f32, peak: f32) -> Result<()> {
+        db::set_measured_gain(&self.conn(), id, gain_db, peak)
+    }
+
+    /// Tracks with neither gain tags nor measured gain, in id order.
+    pub fn tracks_without_gain(&self) -> Result<Vec<(TrackId, PathBuf)>> {
+        db::tracks_without_gain(&self.conn())
     }
 }
 

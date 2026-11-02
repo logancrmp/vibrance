@@ -51,6 +51,12 @@ const MIGRATIONS: &[&str] = &[
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
     ) WITHOUT ROWID;",
+    // v2: track gain. `gain_source` says whether the values came from tags or were measured.
+    "ALTER TABLE tracks ADD COLUMN gain_db REAL;
+    ALTER TABLE tracks ADD COLUMN peak REAL;
+    ALTER TABLE tracks ADD COLUMN gain_source TEXT CHECK (gain_source IN ('tag', 'measured'));
+    -- v1 never read gain tags: make the next scan re-read every file once.
+    UPDATE tracks SET mtime = -1;",
 ];
 
 pub(crate) fn open(path: &Path) -> Result<Connection> {
@@ -218,7 +224,8 @@ fn folder_map(conn: &Connection) -> Result<HashMap<FolderId, PathBuf>> {
 // Tracks
 
 const TRACK_COLUMNS: &str = "id, path, folder_id, title, artist, album_artist, album, track_no, \
-     disc_no, year, genre, duration_ms, format, bitrate_kbps, sample_rate, mtime, size";
+     disc_no, year, genre, duration_ms, format, bitrate_kbps, sample_rate, mtime, size, added_at, \
+     gain_db, peak";
 
 fn track_from_row(r: &Row<'_>, folders: &HashMap<FolderId, PathBuf>) -> rusqlite::Result<Track> {
     let folder_id: FolderId = r.get(2)?;
@@ -240,6 +247,9 @@ fn track_from_row(r: &Row<'_>, folders: &HashMap<FolderId, PathBuf>) -> rusqlite
         sample_rate: r.get(14)?,
         mtime: r.get(15)?,
         size: r.get::<_, i64>(16)? as u64,
+        added: r.get(17)?,
+        gain_db: r.get(18)?,
+        peak: r.get(19)?,
     })
 }
 
@@ -287,29 +297,40 @@ pub(crate) fn known_files(conn: &Connection) -> Result<HashMap<Vec<u8>, Known>> 
     Ok(known)
 }
 
+/// On update, `added_at` is kept, and gain from tags replaces whatever was stored. Without gain
+/// tags, measured gain is kept and stale tag gain is cleared. (SET expressions see the old row.)
 const UPSERT: &str = "INSERT INTO tracks (path, folder_id, title, artist, album_artist, album, \
      track_no, disc_no, year, genre, duration_ms, format, bitrate_kbps, sample_rate, mtime, size, \
-     added_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17) \
+     added_at, gain_db, peak, gain_source) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, \
+     ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20) \
      ON CONFLICT(path) DO UPDATE SET folder_id = excluded.folder_id, title = excluded.title, \
      artist = excluded.artist, album_artist = excluded.album_artist, album = excluded.album, \
      track_no = excluded.track_no, disc_no = excluded.disc_no, year = excluded.year, \
      genre = excluded.genre, duration_ms = excluded.duration_ms, format = excluded.format, \
      bitrate_kbps = excluded.bitrate_kbps, sample_rate = excluded.sample_rate, \
-     mtime = excluded.mtime, size = excluded.size \
-     RETURNING id";
+     mtime = excluded.mtime, size = excluded.size, \
+     gain_db = CASE WHEN excluded.gain_source IS NOT NULL THEN excluded.gain_db \
+         WHEN gain_source = 'measured' THEN gain_db END, \
+     peak = CASE WHEN excluded.gain_source IS NOT NULL THEN excluded.peak \
+         WHEN gain_source = 'measured' THEN peak END, \
+     gain_source = CASE WHEN excluded.gain_source IS NOT NULL THEN excluded.gain_source \
+         WHEN gain_source = 'measured' THEN gain_source END \
+     RETURNING id, added_at, gain_db, peak";
 
 pub(crate) fn upsert_statement(conn: &Connection) -> rusqlite::Result<CachedStatement<'_>> {
     conn.prepare_cached(UPSERT)
 }
 
-/// Inserts or updates a track by path and returns its id. `added_at` is kept on update.
+/// Inserts or updates a track by path. `track.gain_db`/`peak` are the values from its tags;
+/// afterwards `track` holds what was stored: its id, `added`, and the effective gain.
 pub(crate) fn upsert_track(
     stmt: &mut Statement<'_>,
-    track: &Track,
+    track: &mut Track,
     folder_id: FolderId,
     now: i64,
-) -> rusqlite::Result<TrackId> {
-    stmt.query_row(
+) -> rusqlite::Result<()> {
+    let source = track.gain_db.map(|_| "tag");
+    (track.id, track.added, track.gain_db, track.peak) = stmt.query_row(
         params![
             path_bytes(&track.path),
             folder_id,
@@ -328,9 +349,13 @@ pub(crate) fn upsert_track(
             track.mtime,
             track.size as i64,
             now,
+            track.gain_db,
+            track.peak,
+            source,
         ],
-        |r| r.get(0),
-    )
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )?;
+    Ok(())
 }
 
 pub(crate) fn delete_tracks(conn: &mut Connection, ids: &[TrackId]) -> Result<()> {
@@ -343,6 +368,40 @@ pub(crate) fn delete_tracks(conn: &mut Connection, ids: &[TrackId]) -> Result<()
     }
     tx.commit()?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// Gain
+
+/// Stores measured gain unless the track's gain came from tags (tags always win).
+pub(crate) fn set_measured_gain(
+    conn: &Connection,
+    id: TrackId,
+    gain_db: f32,
+    peak: f32,
+) -> Result<()> {
+    if !gain_db.is_finite() || !peak.is_finite() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("measured gain must be finite (gain {gain_db}, peak {peak})"),
+        )
+        .into());
+    }
+    conn.prepare_cached(
+        "UPDATE tracks SET gain_db = ?1, peak = ?2, gain_source = 'measured' \
+         WHERE id = ?3 AND gain_source IS NOT 'tag'",
+    )?
+    .execute(params![gain_db, peak, id])?;
+    Ok(())
+}
+
+pub(crate) fn tracks_without_gain(conn: &Connection) -> Result<Vec<(TrackId, PathBuf)>> {
+    let mut stmt =
+        conn.prepare_cached("SELECT id, path FROM tracks WHERE gain_db IS NULL ORDER BY id")?;
+    let rows = stmt.query_map([], |r| {
+        Ok((r.get(0)?, bytes_to_path(r.get_ref(1)?.as_blob()?)))
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 // ---------------------------------------------------------------------------------------------

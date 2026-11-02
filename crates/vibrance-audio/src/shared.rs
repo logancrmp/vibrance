@@ -80,6 +80,8 @@ pub(crate) struct SegInfo {
     pub pos0: u64,
     pub duration: Option<Duration>,
     pub announce: Announce,
+    /// Normalization gain for this track (linear), applied from the segment's first frame.
+    pub gain: f32,
 }
 
 /// The latest flush published by the decode thread.
@@ -95,7 +97,7 @@ pub(crate) struct Flush {
 }
 
 impl Flush {
-    pub fn encode(&self) -> [u64; 8] {
+    pub fn encode(&self) -> [u64; 9] {
         let (kind, from) = match self.seg.announce {
             Announce::Nothing => (0, 0),
             Announce::Started => (1, 0),
@@ -110,10 +112,11 @@ impl Flush {
             encode_duration(self.seg.duration),
             kind,
             from,
+            u64::from(self.seg.gain.to_bits()),
         ]
     }
 
-    pub fn decode(w: [u64; 8]) -> Self {
+    pub fn decode(w: [u64; 9]) -> Self {
         let announce = match w[6] {
             1 => Announce::Started,
             2 => Announce::Advanced { from: w[7] },
@@ -128,9 +131,26 @@ impl Flush {
                 pos0: w[4],
                 duration: decode_duration(w[5]),
                 announce,
+                gain: f32::from_bits(w[8] as u32),
             },
         }
     }
+}
+
+/// A new normalization gain for a track (decode thread to output callback). It applies to
+/// segments of that track in `generation` starting at ring index `from` or later: gliding if
+/// one is playing, and from the first frame for those not reached yet.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GainUpdate {
+    pub generation: u64,
+    pub track: TrackId,
+    pub from: u64,
+    pub gain: f32,
+}
+
+/// Converts a gain in dB to linear, treating nonsense as no gain.
+pub(crate) fn db_to_gain(db: f32) -> f32 {
+    if db.is_finite() { 10f32.powf(db.clamp(-60.0, 24.0) / 20.0) } else { 1.0 }
 }
 
 /// Marks a point in the sample stream (decode thread to output callback).
@@ -215,7 +235,7 @@ pub(crate) struct Shared {
     state: AtomicU8,
     /// Target output gain (after the perceptual curve and mute), as f32 bits.
     gain: AtomicU32,
-    pub flush: SeqLock<8>,
+    pub flush: SeqLock<9>,
     pub status: SeqLock<8>,
     pub rate: u32,
     pub epoch: Instant,
@@ -234,7 +254,8 @@ impl Shared {
             epoch: Instant::now(),
             realtime,
         };
-        let idle = SegInfo { track: None, pos0: 0, duration: None, announce: Announce::Nothing };
+        let idle =
+            SegInfo { track: None, pos0: 0, duration: None, announce: Announce::Nothing, gain: 1.0 };
         shared.flush.write(Flush { generation: 0, cut: 0, start: 0, seg: idle }.encode());
         shared.status.write(CoreStatus::default().encode());
         shared

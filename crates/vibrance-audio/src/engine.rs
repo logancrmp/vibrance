@@ -39,15 +39,9 @@ impl Inner {
         };
         let (commands, command_rx) = crossbeam_channel::unbounded();
         let (event_tx, events) = crossbeam_channel::unbounded();
-        let player = Player::new(
-            command_rx,
-            event_tx,
-            side.shared.clone(),
-            side.samples,
-            side.markers,
-            side.notices,
-            is_device.then(|| output.control.clone()),
-        );
+        let (shared, tap) = (side.shared.clone(), side.tap.clone());
+        let player =
+            Player::new(command_rx, event_tx, side, is_device.then(|| output.control.clone()));
         let decode = match thread::Builder::new()
             .name("vibrance-decode".into())
             .spawn(move || player.run())
@@ -62,8 +56,8 @@ impl Inner {
         Ok(Inner {
             commands,
             events,
-            shared: side.shared,
-            tap: side.tap,
+            shared,
+            tap,
             slider: AtomicU32::new(1.0f32.to_bits()),
             muted: AtomicBool::new(false),
             decode: Some(decode),

@@ -61,7 +61,11 @@ pub fn excerpt(dir: &Dir, input: &Path, name: &str, start: u64, end: Option<u64>
 }
 
 pub fn track(id: u64, path: &Path) -> Track {
-    Track { id, path: path.to_path_buf() }
+    Track::new(id, path)
+}
+
+pub fn track_with_gain(id: u64, path: &Path, gain_db: f32) -> Track {
+    Track { gain_db, ..Track::new(id, path) }
 }
 
 /// Reads a 16-bit or float WAV, returning the left channel and the rate.

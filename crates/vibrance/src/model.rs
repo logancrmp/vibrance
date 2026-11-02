@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use unicode_normalization::UnicodeNormalization;
 use vibrance_library::{Track, TrackId};
 
+use crate::columns::ColId;
+
 /// Case- and accent-insensitive key for sorting and type-to-jump.
 pub fn fold(s: &str) -> String {
     s.nfd()
@@ -54,6 +56,7 @@ pub struct Album {
     pub name: String,
     pub artist: String,
     pub year: Option<i32>,
+    pub genre: Option<String>,
     /// Track indices in disc → number → title order.
     pub tracks: Vec<usize>,
     pub duration_ms: u64,
@@ -107,6 +110,7 @@ impl Model {
                     name: t.album.clone(),
                     artist: t.album_artist.clone(),
                     year: None,
+                    genre: None,
                     tracks: Vec::new(),
                     duration_ms: 0,
                     name_key: key.name.clone(),
@@ -117,6 +121,9 @@ impl Model {
             });
             let album = &mut albums[ix];
             album.tracks.push(i);
+            if album.genre.is_none() {
+                album.genre = t.genre.clone().filter(|g| !g.is_empty());
+            }
             album.duration_ms += t.duration_ms;
             album.year = match (album.year, t.year) {
                 (Some(a), Some(b)) => Some(a.min(b)),
@@ -184,26 +191,27 @@ impl Model {
         self.albums[album].tracks.iter().map(|&t| self.tracks[t].id).collect()
     }
 
-    pub fn sorted_artists(&self, sort: Option<(ArtistCol, bool)>) -> Vec<usize> {
+    pub fn sorted_artists(&self, sort: Option<(ColId, bool)>) -> Vec<usize> {
         let mut rows: Vec<usize> = (0..self.artists.len()).collect();
         let name = |i: usize| &self.artists[i].key;
-        match sort {
-            None => rows.sort_by(|&a, &b| natural_cmp(name(a), name(b))),
-            Some((col, desc)) => rows.sort_by(|&a, &b| {
+        rows.sort_by(|&a, &b| natural_cmp(name(a), name(b)));
+        if let Some((col, desc)) = sort {
+            rows.sort_by(|&a, &b| {
                 let (x, y) = (&self.artists[a], &self.artists[b]);
                 let ord = match col {
-                    ArtistCol::Name => natural_cmp(&x.key, &y.key),
-                    ArtistCol::Albums => x.albums.len().cmp(&y.albums.len()),
-                    ArtistCol::Tracks => x.tracks.cmp(&y.tracks),
+                    ColId::ArtistAlbums => x.albums.len().cmp(&y.albums.len()),
+                    ColId::ArtistTracks => x.tracks.cmp(&y.tracks),
+                    ColId::ArtistDuration => x.duration_ms.cmp(&y.duration_ms),
+                    _ => natural_cmp(&x.key, &y.key),
                 };
-                flip(ord, desc).then_with(|| natural_cmp(name(a), name(b)))
-            }),
+                flip(ord, desc)
+            });
         }
         rows
     }
 
     /// Albums of the selected artists (all when none are selected).
-    pub fn sorted_albums(&self, artists: &[usize], sort: Option<(AlbumCol, bool)>) -> Vec<usize> {
+    pub fn sorted_albums(&self, artists: &[usize], sort: Option<(ColId, bool)>) -> Vec<usize> {
         let mut rows: Vec<usize> = if artists.is_empty() {
             (0..self.albums.len()).collect()
         } else {
@@ -214,11 +222,12 @@ impl Model {
             rows.sort_by(|&a, &b| {
                 let (x, y) = (&self.albums[a], &self.albums[b]);
                 let ord = match col {
-                    AlbumCol::Name => natural_cmp(&x.name_key, &y.name_key),
-                    AlbumCol::Artist => natural_cmp(&x.artist_key, &y.artist_key),
-                    AlbumCol::Year => x.year.cmp(&y.year),
-                    AlbumCol::Tracks => x.tracks.len().cmp(&y.tracks.len()),
-                    AlbumCol::Duration => x.duration_ms.cmp(&y.duration_ms),
+                    ColId::AlbumArtist => natural_cmp(&x.artist_key, &y.artist_key),
+                    ColId::AlbumYear => x.year.cmp(&y.year),
+                    ColId::AlbumTracks => x.tracks.len().cmp(&y.tracks.len()),
+                    ColId::AlbumDuration => x.duration_ms.cmp(&y.duration_ms),
+                    ColId::AlbumGenre => natural_cmp(&fold(x.genre.as_deref().unwrap_or("")), &fold(y.genre.as_deref().unwrap_or(""))),
+                    _ => natural_cmp(&x.name_key, &y.name_key),
                 };
                 flip(ord, desc)
             });
@@ -227,22 +236,29 @@ impl Model {
     }
 
     /// Songs of the given albums, in the albums' default order unless sorted.
-    pub fn sorted_songs(&self, albums: &[usize], sort: Option<(SongCol, bool)>) -> Vec<usize> {
+    pub fn sorted_songs(&self, albums: &[usize], sort: Option<(ColId, bool)>) -> Vec<usize> {
         let mut ordered = albums.to_vec();
         ordered.sort_by(|&a, &b| album_default_cmp(&self.albums[a], &self.albums[b]));
         let mut rows: Vec<usize> = ordered.iter().flat_map(|&al| self.albums[al].tracks.iter().copied()).collect();
         if let Some((col, desc)) = sort {
             rows.sort_by(|&a, &b| {
                 let (x, y) = (&self.tracks[a], &self.tracks[b]);
+                let album = |t: usize| &self.albums[self.track_album[t]];
                 let ord = match col {
-                    SongCol::Number => x.track_no.cmp(&y.track_no),
-                    SongCol::Title => natural_cmp(&self.title_keys[a], &self.title_keys[b]),
-                    SongCol::Artist => natural_cmp(&self.artist_keys[a], &self.artist_keys[b]),
-                    SongCol::Album => natural_cmp(
-                        &self.albums[self.track_album[a]].name_key,
-                        &self.albums[self.track_album[b]].name_key,
-                    ),
-                    SongCol::Duration => x.duration_ms.cmp(&y.duration_ms),
+                    ColId::Number => x.track_no.cmp(&y.track_no),
+                    ColId::Artist => natural_cmp(&self.artist_keys[a], &self.artist_keys[b]),
+                    ColId::Album => natural_cmp(&album(a).name_key, &album(b).name_key),
+                    ColId::Duration => x.duration_ms.cmp(&y.duration_ms),
+                    ColId::Disc => x.disc_no.cmp(&y.disc_no),
+                    ColId::Year => x.year.cmp(&y.year),
+                    ColId::Genre => natural_cmp(&fold(x.genre.as_deref().unwrap_or("")), &fold(y.genre.as_deref().unwrap_or(""))),
+                    ColId::AlbumArtistCol => natural_cmp(&album(a).artist_key, &album(b).artist_key),
+                    ColId::Format => x.format.cmp(&y.format),
+                    ColId::Bitrate => x.bitrate_kbps.cmp(&y.bitrate_kbps),
+                    ColId::SampleRate => x.sample_rate.cmp(&y.sample_rate),
+                    ColId::DateAdded => date_added(x).cmp(&date_added(y)),
+                    ColId::FilePath => x.path.cmp(&y.path),
+                    _ => natural_cmp(&self.title_keys[a], &self.title_keys[b]),
                 };
                 flip(ord, desc)
             });
@@ -253,6 +269,11 @@ impl Model {
     pub fn title_key(&self, track: usize) -> &str {
         &self.title_keys[track]
     }
+}
+
+/// When the track entered the library, in Unix seconds.
+pub fn date_added(t: &Track) -> i64 {
+    t.added
 }
 
 fn flip(ord: Ordering, desc: bool) -> Ordering {
@@ -273,29 +294,20 @@ pub fn best_match<'a>(rows: impl Iterator<Item = &'a str> + Clone, term: &str) -
         .or_else(|| rows.into_iter().position(|label| label.contains(&term)))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArtistCol {
-    Name,
-    Albums,
-    Tracks,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AlbumCol {
-    Name,
-    Artist,
-    Year,
-    Tracks,
-    Duration,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SongCol {
-    Number,
-    Title,
-    Artist,
-    Album,
-    Duration,
+/// Calendar date for the Date Added column, from Unix seconds (UTC).
+pub fn format_date(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    // Civil-from-days (Howard Hinnant).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
 }
 
 pub fn format_duration(ms: u64) -> String {
@@ -313,6 +325,12 @@ mod tests {
         assert_eq!(natural_cmp("track 2", "track 10"), Ordering::Less);
         assert_eq!(natural_cmp("a", "b"), Ordering::Less);
         assert_eq!(natural_cmp("007", "7"), Ordering::Equal);
+    }
+
+    #[test]
+    fn dates() {
+        assert_eq!(format_date(0), "1970-01-01");
+        assert_eq!(format_date(1_793_577_600), "2026-11-02");
     }
 
     #[test]

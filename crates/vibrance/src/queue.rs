@@ -174,6 +174,54 @@ impl Queue {
         }
     }
 
+    /// Insert at a drop position. Items dropped right after the current one play next.
+    pub fn insert_at(&mut self, at: usize, ids: &[TrackId]) {
+        let at = at.min(self.items.len());
+        let n = ids.len();
+        self.items.splice(at..at, ids.iter().copied());
+        if let Some(c) = self.current
+            && c >= at
+        {
+            self.current = Some(c + n);
+        }
+        if self.cursor > at {
+            self.cursor += n;
+        }
+        if let Some(original) = &mut self.original {
+            original.extend_from_slice(ids);
+        }
+    }
+
+    /// Move `rows` (in their current order) so they land before the item now at `to`.
+    /// Returns the moved rows' new indices.
+    pub fn move_rows(&mut self, rows: &[usize], to: usize) -> Vec<usize> {
+        let len = self.items.len();
+        let mut moving: Vec<usize> = rows.iter().copied().filter(|&r| r < len).collect();
+        moving.sort_unstable();
+        moving.dedup();
+        if moving.is_empty() {
+            return Vec::new();
+        }
+        let to = to.min(len);
+        let rest: Vec<usize> = (0..len).filter(|i| !moving.contains(i)).collect();
+        let insert = to - moving.iter().filter(|&&r| r < to).count();
+        let mut order = rest;
+        order.splice(insert..insert, moving.iter().copied());
+
+        let new_index = |old: usize| order.iter().position(|&o| o == old);
+        self.current = self.current.and_then(new_index);
+        self.cursor = if self.cursor >= len {
+            len
+        } else {
+            match self.current {
+                Some(c) => c + 1,
+                None => new_index(self.cursor).unwrap_or(self.cursor),
+            }
+        };
+        self.items = order.iter().map(|&o| self.items[o]).collect();
+        (insert..insert + moving.len()).collect()
+    }
+
     pub fn toggle_shuffle(&mut self) {
         if self.shuffle {
             self.shuffle = false;
@@ -350,6 +398,33 @@ mod tests {
         q.advanced_to(next);
         assert_eq!(q.now, Some(2));
         assert_eq!(q.current, Some(1));
+    }
+
+    #[test]
+    fn insert_after_current_plays_next() {
+        let mut q = q(&[1, 2, 3]);
+        q.insert_at(1, &[8, 9]);
+        assert_eq!(q.items, vec![1, 8, 9, 2, 3]);
+        assert_eq!(q.upcoming(), Some(8));
+        q.insert_at(0, &[7]);
+        assert_eq!(q.current, Some(1));
+        assert_eq!(q.upcoming(), Some(8));
+    }
+
+    #[test]
+    fn move_rows_keeps_current() {
+        let mut q = q(&[1, 2, 3, 4, 5]);
+        q.jump(1);
+        let moved = q.move_rows(&[3, 4], 1);
+        assert_eq!(q.items, vec![1, 4, 5, 2, 3]);
+        assert_eq!(moved, vec![1, 2]);
+        assert_eq!(q.current, Some(3));
+        assert_eq!(q.upcoming(), Some(3));
+        let moved = q.move_rows(&[0], 5);
+        assert_eq!(q.items, vec![4, 5, 2, 3, 1]);
+        assert_eq!(moved, vec![4]);
+        assert_eq!(q.now, Some(2));
+        assert_eq!(q.current, Some(2));
     }
 
     #[test]
