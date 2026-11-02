@@ -1,5 +1,6 @@
-//! The Rivian-style seek bar: a thick track whose remaining part lifts
-//! into a hump over the thumb.
+//! The Rivian-style seek bar: a thick track that lifts into a hump over the thumb, played
+//! up to the hump's top. The hump is always centred on the playhead, so at either end of the
+//! track half of it is cut off: the track starts (and finishes) on the hump's top.
 
 use iced::mouse::{self, Cursor};
 use iced::widget::canvas::{self, Action, Event, Frame, Geometry, LineCap, LineJoin, Path, Stroke};
@@ -12,6 +13,8 @@ pub const HEIGHT: f32 = 36.0;
 const BASELINE: f32 = 26.0;
 const INSET: f32 = 8.0;
 const TRACK: f32 = 6.0;
+/// Line segments per half of the hump.
+const STEPS: usize = 24;
 
 pub struct SeekBar {
     /// Displayed playhead, 0..=1.
@@ -33,6 +36,56 @@ pub struct State {
 
 fn fraction_at(bounds: Rectangle, x: f32) -> f32 {
     ((x - bounds.x - INSET) / (bounds.width - 2.0 * INSET)).clamp(0.0, 1.0)
+}
+
+/// The track's centre line from `x0` to `x1`: flat, lifted into a hump of half-width `hw` and
+/// height `h` over `tx` (two S-curves meeting at the top), uncut. Its x only ever increases.
+fn centre_line(x0: f32, x1: f32, tx: f32, hw: f32, h: f32) -> Vec<Point> {
+    let (y, top) = (BASELINE, BASELINE - h);
+    let halves = [
+        [Point::new(tx - hw, y), Point::new(tx - hw / 2.0, y), Point::new(tx - hw / 2.0, top), Point::new(tx, top)],
+        [Point::new(tx, top), Point::new(tx + hw / 2.0, top), Point::new(tx + hw / 2.0, y), Point::new(tx + hw, y)],
+    ];
+    let cubic = |c: &[Point; 4], t: f32| {
+        let u = 1.0 - t;
+        let w = [u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t];
+        Point::new(c.iter().zip(w).map(|(p, w)| p.x * w).sum(), c.iter().zip(w).map(|(p, w)| p.y * w).sum())
+    };
+    let mut points = vec![Point::new(x0.min(tx - hw), y)];
+    for half in &halves {
+        points.extend((0..=STEPS).map(|i| cubic(half, i as f32 / STEPS as f32)));
+    }
+    points.push(Point::new(x1.max(tx + hw), y));
+    points
+}
+
+/// The part of `line` between `from` and `to` along x.
+fn between(line: &[Point], from: f32, to: f32) -> Vec<Point> {
+    let mut out = Vec::new();
+    for pair in line.windows(2) {
+        let (p, q) = (pair[0], pair[1]);
+        if q.x <= p.x || q.x < from || p.x > to {
+            continue;
+        }
+        let at = |x: f32| Point::new(x, p.y + (q.y - p.y) * (x - p.x) / (q.x - p.x));
+        if out.is_empty() {
+            out.push(if p.x < from { at(from) } else { p });
+        }
+        let end = if q.x > to { at(to) } else { q };
+        if out.last() != Some(&end) {
+            out.push(end);
+        }
+    }
+    out
+}
+
+fn polyline(points: &[Point]) -> Path {
+    Path::new(|p| {
+        p.move_to(points[0]);
+        for &q in &points[1..] {
+            p.line_to(q);
+        }
+    })
 }
 
 impl canvas::Program<Message> for SeekBar {
@@ -83,27 +136,22 @@ impl canvas::Program<Message> for SeekBar {
         let hw = 26.0 + 8.0 * self.lift + 4.0 * self.drag;
         let h = 13.0 + 6.0 * self.lift + 3.0 * self.drag;
         let r = 7.0 + 2.0 * self.lift + 1.0 * self.drag;
-        // Near either end the hump narrows on that side instead of spilling past the track.
-        let lw = hw.min(tx - x0 + TRACK).max(TRACK);
-        let rw = hw.min(x1 - tx + TRACK).max(TRACK);
-        let (a, b) = (tx - lw, tx + rw);
+        let line = centre_line(x0, x1, tx, hw, h);
+        let stroke = |color, cap| Stroke::default().with_width(TRACK).with_color(color).with_line_cap(cap).with_line_join(LineJoin::Round);
 
-        let remaining = Path::new(|p| {
-            p.move_to(Point::new(a, y));
-            p.bezier_curve_to(Point::new(tx - lw / 2.0, y), Point::new(tx - lw / 2.0, y - h), Point::new(tx, y - h));
-            p.bezier_curve_to(Point::new(tx + rw / 2.0, y - h), Point::new(tx + rw / 2.0, y), Point::new(b, y));
-            if b < x1 {
-                p.line_to(Point::new(x1, y));
+        // What's left, from the hump's top on.
+        if x1 - tx > 0.5 {
+            frame.stroke(&polyline(&between(&line, tx, x1)), stroke(self.colors.secondary_container, LineCap::Round));
+        }
+        // What's played, up to the hump's top: cut square there (over the rest's round end),
+        // rounded only where the track itself ends.
+        if tx - x0 > 0.5 {
+            let played = between(&line, x0, tx);
+            frame.stroke(&polyline(&played), stroke(self.colors.primary, LineCap::Butt));
+            frame.fill(&Path::circle(played[0], TRACK / 2.0), self.colors.primary);
+            if x1 - tx <= 0.5 {
+                frame.fill(&Path::circle(played[played.len() - 1], TRACK / 2.0), self.colors.primary);
             }
-        });
-        let stroke = |color| Stroke::default().with_width(TRACK).with_color(color).with_line_cap(LineCap::Round).with_line_join(LineJoin::Round);
-        frame.stroke(&remaining, stroke(self.colors.secondary_container));
-
-        let elapsed_end = a.max(x0);
-        if elapsed_end > x0 + 0.5 {
-            frame.stroke(&Path::line(Point::new(x0, y), Point::new(elapsed_end, y)), stroke(self.colors.primary));
-        } else {
-            frame.fill(&Path::circle(Point::new(x0, y), TRACK / 2.0), self.colors.primary);
         }
         frame.fill(&Path::circle(Point::new(tx, y), r), self.colors.primary);
         vec![frame.into_geometry()]
